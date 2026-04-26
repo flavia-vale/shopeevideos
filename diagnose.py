@@ -15,6 +15,27 @@ from playwright.async_api import async_playwright
 
 
 SHOPEE_BASE = "https://shopee.com.br"
+CHROMIUM_EXEC = "/opt/pw-browsers/chromium-1194/chrome-linux/chrome"
+
+
+def _normalize_cookie(c: dict) -> dict:
+    VALID_SAME_SITE = {"Strict", "Lax", "None"}
+    same_site = c.get("sameSite")
+    if same_site not in VALID_SAME_SITE:
+        same_site = "None"
+    normalized: dict = {
+        "name":     c["name"],
+        "value":    c["value"],
+        "domain":   c.get("domain", ""),
+        "path":     c.get("path", "/"),
+        "secure":   bool(c.get("secure", False)),
+        "httpOnly": bool(c.get("httpOnly", False)),
+        "sameSite": same_site,
+    }
+    expires = c.get("expires") or c.get("expirationDate")
+    if expires is not None:
+        normalized["expires"] = int(expires)
+    return normalized
 
 PROBE_SELECTORS = [
     "[data-sqe='video-item']",
@@ -61,7 +82,10 @@ async def diagnose(product_id: str, cookies_path: str, headless: bool) -> None:
     )
 
     async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=headless)
+        browser = await pw.chromium.launch(
+            headless=headless,
+            executable_path=CHROMIUM_EXEC,
+        )
         context = await browser.new_context(
             user_agent=(
                 "Mozilla/5.0 (Linux; Android 13; Pixel 7) "
@@ -70,11 +94,13 @@ async def diagnose(product_id: str, cookies_path: str, headless: bool) -> None:
             ),
             viewport={"width": 390, "height": 844},
             locale="pt-BR",
+            ignore_https_errors=True,
         )
 
-        cookies = json.loads(Path(cookies_path).read_text(encoding="utf-8"))
-        if isinstance(cookies, dict) and "cookies" in cookies:
-            cookies = cookies["cookies"]
+        raw = json.loads(Path(cookies_path).read_text(encoding="utf-8"))
+        if isinstance(raw, dict) and "cookies" in raw:
+            raw = raw["cookies"]
+        cookies = [_normalize_cookie(c) for c in raw]
         await context.add_cookies(cookies)
 
         page = await context.new_page()

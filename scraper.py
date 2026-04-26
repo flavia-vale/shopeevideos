@@ -52,6 +52,9 @@ log = logging.getLogger("shopee")
 
 SHOPEE_BASE = "https://shopee.com.br"
 
+# Chromium pré-instalado no ambiente (evita download bloqueado pelo CDN)
+CHROMIUM_EXEC = "/opt/pw-browsers/chromium-1194/chrome-linux/chrome"
+
 CREATORS_TAB_TEXTS = ["aprender com criadores", "learn from creators"]
 
 # Seletores em ordem de confiança — atualize aqui se a Shopee mudar o DOM
@@ -114,12 +117,40 @@ async def with_retry(coro_fn, retries: int = 2, base_delay: float = 2.0, label: 
 
 # ── Cookies ──────────────────────────────────────────────────────────────────
 
+def _normalize_cookie(c: dict) -> dict:
+    """
+    Converte cookies do formato Chrome/EditThisCookie para o formato Playwright.
+    - expirationDate → expires (int)
+    - sameSite null  → "None"
+    - remove campos desconhecidos pelo Playwright
+    """
+    VALID_SAME_SITE = {"Strict", "Lax", "None"}
+    same_site = c.get("sameSite")
+    if same_site not in VALID_SAME_SITE:
+        same_site = "None"
+
+    normalized: dict = {
+        "name":     c["name"],
+        "value":    c["value"],
+        "domain":   c.get("domain", ""),
+        "path":     c.get("path", "/"),
+        "secure":   bool(c.get("secure", False)),
+        "httpOnly": bool(c.get("httpOnly", False)),
+        "sameSite": same_site,
+    }
+
+    expires = c.get("expires") or c.get("expirationDate")
+    if expires is not None:
+        normalized["expires"] = int(expires)
+
+    return normalized
+
+
 def load_cookies_from_file(path: str) -> list[dict]:
     data = json.loads(Path(path).read_text(encoding="utf-8"))
-    # aceita lista pura ou formato exportado por extensões (com chave "cookies")
     if isinstance(data, dict) and "cookies" in data:
         data = data["cookies"]
-    return data
+    return [_normalize_cookie(c) for c in data]
 
 
 async def inject_cookies(context: BrowserContext, path: str) -> None:
@@ -331,12 +362,16 @@ async def run(
     results: list[ProductResult | None] = [None] * len(product_ids)
 
     async with async_playwright() as pw:
-        browser: Browser = await pw.chromium.launch(headless=headless)
+        browser: Browser = await pw.chromium.launch(
+            headless=headless,
+            executable_path=CHROMIUM_EXEC,
+        )
         context: BrowserContext = await browser.new_context(
             user_agent=MOBILE_UA,
             viewport={"width": 390, "height": 844},
             locale="pt-BR",
             timezone_id="America/Sao_Paulo",
+            ignore_https_errors=True,
         )
         await inject_cookies(context, cookies_path)
 
