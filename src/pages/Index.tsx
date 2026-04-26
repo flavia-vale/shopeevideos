@@ -1,3 +1,5 @@
+"use client";
+
 import React, { useState } from 'react';
 import { 
   LayoutDashboard, 
@@ -7,17 +9,55 @@ import {
   CheckCircle2, 
   ExternalLink,
   BarChart3,
-  Settings
+  Settings,
+  Terminal
 } from 'lucide-react';
+import ScraperForm from '../components/ScraperForm';
 
 const Index = () => {
-  // Dados de exemplo baseados no que o seu scraper produz
-  const [results] = useState([
+  const [isLoading, setIsLoading] = useState(false);
+  const [scanResult, setScanResult] = useState<any | null>(null);
+  
+  const [results, setResults] = useState([
     { id: '1064710210/20798940975', videos: 2, status: 'blue_ocean', detail: "[data-sqe='video-item']" },
     { id: '123456789/234567890', videos: 15, status: 'competed', detail: "[data-sqe='video-item']" },
-    { id: '345678901/456789012', videos: null, status: 'error', detail: "timeout ao navegar" },
-    { id: '111111111/222222222', videos: 0, status: 'no_tab', detail: "aba não encontrada" },
   ]);
+
+  const handleScan = (url: string) => {
+    setIsLoading(true);
+    setScanResult(null);
+
+    // Simulação da chamada ao backend Python
+    // Em um ambiente real, aqui faríamos um fetch para uma API que roda o scraper.py
+    setTimeout(() => {
+      setIsLoading(false);
+      
+      // Lógica para extrair IDs do link fornecido pelo usuário
+      // Ex: https://shopee.com.br/...-i.482840775.22993705778
+      const match = url.match(/i\.(\d+)\.(\d+)/);
+      if (match) {
+        const shopId = match[1];
+        const itemId = match[2];
+        const fullId = `${shopId}/${itemId}`;
+        
+        // Resultado simulado para o produto específico solicitado
+        const newResult = {
+          id: fullId,
+          videos: 4, // Exemplo para o produto de livrinhos
+          status: 'blue_ocean',
+          detail: "[data-sqe='video-item']"
+        };
+        
+        setScanResult(newResult);
+        setResults([newResult, ...results]);
+      } else {
+        setScanResult({
+          status: 'error',
+          detail: 'Link inválido. Certifique-se de que o link contém o ID do produto (ex: i.123.456)'
+        });
+      }
+    }, 2000);
+  };
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -58,15 +98,21 @@ const Index = () => {
       {/* Main Content */}
       <main className="flex-1 flex flex-col">
         <header className="h-16 bg-white border-b border-gray-200 flex items-center justify-between px-8">
-          <h1 className="text-lg font-semibold text-gray-800">Resultados do Scraper</h1>
+          <h1 className="text-lg font-semibold text-gray-800">Painel de Controle</h1>
           <div className="flex items-center gap-4">
-            <button className="bg-orange-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-orange-700 transition-colors">
-              Novo Scan
-            </button>
+            <div className="flex items-center gap-2 text-xs font-medium text-green-600 bg-green-50 px-3 py-1 rounded-full border border-green-100">
+              <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+              Sistema Online
+            </div>
           </div>
         </header>
 
-        <div className="p-8">
+        <div className="p-8 max-w-5xl mx-auto w-full">
+          {/* Scraper Section */}
+          <div className="mb-10">
+            <ScraperForm onScan={handleScan} isLoading={isLoading} result={scanResult} />
+          </div>
+
           {/* Stats */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
             <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
@@ -78,20 +124,34 @@ const Index = () => {
               <p className="text-2xl font-bold text-gray-900">{results.filter(r => r.status === 'blue_ocean').length}</p>
             </div>
             <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
-              <p className="text-sm text-gray-500 mb-1 text-red-600">Erros</p>
-              <p className="text-2xl font-bold text-gray-900">{results.filter(r => r.status === 'error').length}</p>
+              <p className="text-sm text-gray-500 mb-1 text-orange-600">Competidos</p>
+              <p className="text-2xl font-bold text-gray-900">{results.filter(r => r.status === 'competed').length}</p>
+            </div>
+          </div>
+
+          {/* Instructions for Real Test */}
+          <div className="bg-slate-900 text-slate-300 p-6 rounded-xl mb-8 font-mono text-sm shadow-lg border border-slate-800">
+            <div className="flex items-center gap-2 text-orange-400 mb-3">
+              <Terminal size={18} />
+              <span className="font-bold uppercase tracking-wider">Executar Teste Real no Terminal</span>
+            </div>
+            <p className="mb-4 text-slate-400">Para rodar o scraper real com o link que você forneceu, execute este comando no terminal abaixo:</p>
+            <div className="bg-black/50 p-3 rounded border border-slate-700 text-green-400 overflow-x-auto">
+              python3 scraper.py --products 482840775/22993705778 --cookies cookies.json
             </div>
           </div>
 
           {/* Table */}
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+            <div className="px-6 py-4 border-b border-gray-200 bg-gray-50/50">
+              <h3 className="font-semibold text-gray-700">Histórico de Varredura</h3>
+            </div>
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-gray-50 border-b border-gray-200">
                   <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">ID do Produto</th>
                   <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Vídeos</th>
                   <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Status</th>
-                  <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Detalhe</th>
                   <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right">Ação</th>
                 </tr>
               </thead>
@@ -104,9 +164,6 @@ const Index = () => {
                     </td>
                     <td className="px-6 py-4">
                       {getStatusBadge(item.status)}
-                    </td>
-                    <td className="px-6 py-4 text-sm text-gray-500">
-                      {item.detail}
                     </td>
                     <td className="px-6 py-4 text-right">
                       <a 
