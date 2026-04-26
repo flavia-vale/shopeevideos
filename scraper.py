@@ -365,6 +365,10 @@ async def run(
         browser: Browser = await pw.chromium.launch(
             headless=headless,
             executable_path=CHROMIUM_EXEC,
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                "--disable-dev-shm-usage",
+            ],
         )
         context: BrowserContext = await browser.new_context(
             user_agent=MOBILE_UA,
@@ -373,6 +377,12 @@ async def run(
             timezone_id="America/Sao_Paulo",
             ignore_https_errors=True,
         )
+        # injeta JavaScript para mascarar Playwright
+        await context.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', { get: () => false });
+            Object.defineProperty(navigator, 'plugins', { get: () => [] });
+            window.chrome = { runtime: { id: 'fakeId' } };
+        """)
         await inject_cookies(context, cookies_path)
 
         async def bounded(idx: int, pid: str) -> None:

@@ -85,6 +85,7 @@ async def diagnose(product_id: str, cookies_path: str, headless: bool) -> None:
         browser = await pw.chromium.launch(
             headless=headless,
             executable_path=CHROMIUM_EXEC,
+            args=["--disable-blink-features=AutomationControlled"],
         )
         context = await browser.new_context(
             user_agent=(
@@ -102,6 +103,11 @@ async def diagnose(product_id: str, cookies_path: str, headless: bool) -> None:
             raw = raw["cookies"]
         cookies = [_normalize_cookie(c) for c in raw]
         await context.add_cookies(cookies)
+        await context.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', { get: () => false });
+            Object.defineProperty(navigator, 'plugins', { get: () => [] });
+            window.chrome = { runtime: { id: 'fakeId' } };
+        """)
 
         page = await context.new_page()
         print(f"\n[1] Abrindo {url}")
