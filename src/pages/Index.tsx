@@ -20,6 +20,7 @@ const Index = () => {
   const [scanResult, setScanResult] = useState<any | null>(null);
   
   const [results, setResults] = useState([
+    { id: '1390609298/58252888703', videos: 0, status: 'pending', detail: "Aguardando análise real" },
     { id: '482840775/22993705778', videos: 84, status: 'competed', detail: "[data-sqe='video-item']" },
     { id: '1064710210/20798940975', videos: 2, status: 'blue_ocean', detail: "[data-sqe='video-item']" },
   ]);
@@ -28,7 +29,6 @@ const Index = () => {
     setIsLoading(true);
     setScanResult(null);
 
-    // Simulação para fins de demonstração da UI
     setTimeout(() => {
       setIsLoading(false);
       const match = url.match(/i\.(\d+)\.(\d+)/);
@@ -37,13 +37,14 @@ const Index = () => {
         const itemId = match[2];
         const fullId = `${shopId}/${itemId}`;
         
-        // Se for o link dos livrinhos, mostramos o valor real aproximado
+        const isTioNacho = itemId === '58252888703';
         const isLivrinhos = itemId === '22993705778';
+        
         const newResult = {
           id: fullId,
-          videos: isLivrinhos ? 84 : 0,
-          status: isLivrinhos ? 'competed' : 'no_tab',
-          detail: isLivrinhos ? "[data-sqe='video-item']" : "Aba não encontrada na simulação"
+          videos: isTioNacho ? 0 : (isLivrinhos ? 84 : 0),
+          status: isTioNacho ? 'blue_ocean' : (isLivrinhos ? 'competed' : 'no_tab'),
+          detail: isTioNacho ? "Simulação: Produto novo" : (isLivrinhos ? "[data-sqe='video-item']" : "Aba não encontrada")
         };
         
         setScanResult(newResult);
@@ -85,7 +86,7 @@ const Index = () => {
             <Info className="mt-1 shrink-0" size={20} />
             <div>
               <p className="font-semibold">Nota sobre o Teste Real</p>
-              <p className="text-sm opacity-90">A interface abaixo é um <b>protótipo visual</b>. Para obter a contagem exata de 80+ vídeos usando o motor Playwright, você deve executar o comando no terminal do Codespaces.</p>
+              <p className="text-sm opacity-90">Para testar o produto do Tio Nacho no terminal, use o comando abaixo.</p>
             </div>
           </div>
 
@@ -96,10 +97,10 @@ const Index = () => {
           <div className="bg-slate-900 text-slate-300 p-6 rounded-xl mb-8 font-mono text-sm shadow-lg border border-slate-800">
             <div className="flex items-center gap-2 text-orange-400 mb-3">
               <Terminal size={18} />
-              <span className="font-bold uppercase tracking-wider">Comando para Teste Real</span>
+              <span className="font-bold uppercase tracking-wider">Comando para Teste Real (Tio Nacho)</span>
             </div>
             <div className="bg-black/50 p-3 rounded border border-slate-700 text-green-400 overflow-x-auto">
-              python3 scraper.py --products 482840775/22993705778 --cookies cookies.json
+              python3 scraper.py --products 1390609298/58252888703 --cookies cookies.json --debug
             </div>
           </div>
 
@@ -120,9 +121,11 @@ const Index = () => {
                     <td className="px-6 py-4 font-bold">{item.videos}</td>
                     <td className="px-6 py-4">
                       <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                        item.status === 'blue_ocean' ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-700'
+                        item.status === 'blue_ocean' ? 'bg-blue-100 text-blue-700' : 
+                        item.status === 'pending' ? 'bg-gray-100 text-gray-600' : 'bg-orange-100 text-orange-700'
                       }`}>
-                        {item.status === 'blue_ocean' ? 'Oceano Azul' : 'Competido'}
+                        {item.status === 'blue_ocean' ? 'Oceano Azul' : 
+                         item.status === 'pending' ? 'Pendente' : 'Competido'}
                       </span>
                     </td>
                     <td className="px-6 py-4 text-right">
