@@ -1,23 +1,21 @@
 """
-Shopee Video Counter
+Shopee Video Counter - v1.1
 Conta vídeos na aba "Aprender com criadores" para identificar Oceanos Azuis.
 """
 
 import argparse
 import asyncio
-import csv
 import json
 import logging
 import sys
 import time
 import os
-from dataclasses import dataclass, asdict, field
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
 from playwright.async_api import (
     async_playwright,
-    Browser,
     BrowserContext,
     Page,
     TimeoutError as PWTimeout,
@@ -28,6 +26,11 @@ from playwright.async_api import (
 def setup_logging(debug: bool = False) -> logging.Logger:
     level = logging.DEBUG if debug else logging.INFO
     fmt = "%(asctime)s [%(levelname)s] %(message)s"
+    
+    # Limpa handlers existentes para evitar duplicidade
+    for handler in logging.root.handlers[:]:
+        logging.root.removeHandler(handler)
+        
     logging.basicConfig(
         level=level,
         format=fmt,
@@ -88,7 +91,6 @@ class ProductResult:
     status: str = "ok"
     error: str | None = None
     selector_used: str | None = None
-    screenshot: str | None = None
     elapsed_s: float = 0.0
     timestamp: str = field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
 
@@ -169,7 +171,7 @@ async def find_and_click_tab(page: Page) -> bool:
                     await asyncio.sleep(2)
                     return True
         
-        log.warning("Abas encontradas na página: %s", found_texts)
+        log.debug("Abas encontradas na página: %s", found_texts)
     except Exception as e:
         log.debug("Erro ao procurar abas: %s", e)
     return False
@@ -256,12 +258,14 @@ async def run(ids: list[str], cookies: str, concurrency: int, rps: float, thresh
         return results
 
 def main():
-    p = argparse.ArgumentParser()
-    p.add_argument("--products", required=True)
-    p.add_argument("--cookies", required=True)
-    p.add_argument("--threshold", type=int, default=5)
-    p.add_argument("--headless", action="store_true", default=True)
-    p.add_argument("--debug", action="store_true")
+    p = argparse.ArgumentParser(description="Shopee Video Counter")
+    p.add_argument("--products", required=True, help="IDs dos produtos separados por vírgula")
+    p.add_argument("--cookies", required=True, help="Caminho para o arquivo cookies.json")
+    p.add_argument("--threshold", type=int, default=5, help="Limite para Oceano Azul")
+    p.add_argument("--no-headless", action="store_false", dest="headless", help="Desativa o modo headless")
+    p.add_argument("--debug", action="store_true", help="Ativa logs detalhados")
+    p.set_defaults(headless=True)
+    
     args = p.parse_args()
     
     setup_logging(args.debug)
