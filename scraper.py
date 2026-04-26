@@ -10,6 +10,7 @@ import json
 import logging
 import sys
 import time
+import os
 from dataclasses import dataclass, asdict, field
 from datetime import datetime
 from pathlib import Path
@@ -43,7 +44,9 @@ log = logging.getLogger("shopee")
 # ── Configurações ────────────────────────────────────────────────────────────
 
 SHOPEE_BASE = "https://shopee.com.br"
-CHROMIUM_EXEC = "/opt/pw-browsers/chromium-1194/chrome-linux/chrome"
+# No Docker, o Playwright gerencia o executável. No local, usamos o caminho específico.
+CHROMIUM_EXEC = "/opt/pw-browsers/chromium-1194/chrome-linux/chrome" if os.path.exists("/opt/pw-browsers") else None
+
 CREATORS_TAB_TEXTS = ["aprender com criadores", "learn from creators", "vídeos"]
 
 VIDEO_ITEM_SELECTORS = [
@@ -115,6 +118,9 @@ def _normalize_cookie(c: dict) -> dict:
     return normalized
 
 def load_cookies_from_file(path: str) -> list[dict]:
+    if not os.path.exists(path):
+        log.warning("Arquivo de cookies %s não encontrado. Usando lista vazia.", path)
+        return []
     data = json.loads(Path(path).read_text(encoding="utf-8"))
     if isinstance(data, dict) and "cookies" in data:
         data = data["cookies"]
@@ -122,7 +128,8 @@ def load_cookies_from_file(path: str) -> list[dict]:
 
 async def inject_cookies(context: BrowserContext, path: str) -> None:
     cookies = load_cookies_from_file(path)
-    await context.add_cookies(cookies)
+    if cookies:
+        await context.add_cookies(cookies)
 
 def is_session_expired(url: str) -> bool:
     return any(indicator in url for indicator in LOGIN_INDICATORS)
@@ -191,7 +198,6 @@ _SCROLL_JS = """
 """
 
 async def scroll_and_wait(page: Page, stable_ms: int = 3000, max_ms: int = 60_000) -> int:
-    # Aumentado o tempo para 60s e estabilidade para 3s para garantir que 80+ vídeos carreguem
     count = await page.evaluate(_SCROLL_JS, VIDEO_ITEM_SELECTORS, stable_ms, max_ms)
     log.debug("Scroll finalizado. Total encontrado: %d", count)
     return count
@@ -225,7 +231,12 @@ async def process_product(page: Page, pid: str, threshold: int, screenshot: bool
 
 async def run(ids: list[str], cookies: str, concurrency: int, rps: float, threshold: int, headless: bool) -> list[ProductResult]:
     async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=headless, executable_path=CHROMIUM_EXEC, args=["--disable-blink-features=AutomationControlled"])
+        launch_args = ["--disable-blink-features=AutomationControlled"]
+        browser = await pw.chromium.launch(
+            headless=headless, 
+            executable_path=CHROMIUM_EXEC, 
+            args=launch_args
+        )
         context = await browser.new_context(user_agent=MOBILE_UA, viewport={"width": 390, "height": 844}, ignore_https_errors=True)
         await inject_cookies(context, cookies)
         
@@ -245,16 +256,17 @@ def main():
     p.add_argument("--products", required=True)
     p.add_argument("--cookies", required=True)
     p.add_argument("--threshold", type=int, default=5)
+    p.add_argument("--headless", action="store_true", default=True)
     args = p.parse_args()
     
     setup_logging()
     ids = [x.strip() for x in args.products.split(",")]
-    results = asyncio.run(run(ids, args.cookies, 1, 1, args.threshold, True))
+    results = asyncio.run(run(ids, args.cookies, 1, 1, args.threshold, args.headless))
     
     print(f"\n{'ID':<25} {'Videos':<10} {'Status'}")
     print("-" * 50)
     for r in results:
-        print(f"{r.product_id:<25} {r.video_count if r.video_count else 'N/A':<10} {r.status}")
+        print(f"{r.product_id:<25} {r.video_count if r.video_count is not None else 'N/A':<10} {r.status}")
 
 if __name__ == "__main__":
     main()
