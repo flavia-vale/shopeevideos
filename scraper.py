@@ -44,10 +44,17 @@ log = logging.getLogger("shopee")
 # ── Configurações ────────────────────────────────────────────────────────────
 
 SHOPEE_BASE = "https://shopee.com.br"
-# No Docker, o Playwright gerencia o executável. No local, usamos o caminho específico.
 CHROMIUM_EXEC = "/opt/pw-browsers/chromium-1194/chrome-linux/chrome" if os.path.exists("/opt/pw-browsers") else None
 
-CREATORS_TAB_TEXTS = ["aprender com criadores", "learn from creators", "vídeos"]
+# Variações de texto para a aba de vídeos
+CREATORS_TAB_TEXTS = [
+    "aprender com criadores", 
+    "learn from creators", 
+    "vídeos", 
+    "videos", 
+    "criadores",
+    "ver vídeos"
+]
 
 VIDEO_ITEM_SELECTORS = [
     "[data-sqe='video-item']",
@@ -59,11 +66,13 @@ VIDEO_ITEM_SELECTORS = [
     "div[class*='video'] div[class*='item']",
 ]
 
+# Seletores para encontrar as abas de navegação do produto
 NAV_TAB_SELECTOR = (
     "[role='tab'], "
     "div[class*='tab'] span, "
     "li[class*='tab'] span, "
-    "div[class*='Tab'] span"
+    "div[class*='Tab'] span, "
+    ".shopee-tabs__tab"
 )
 
 LOGIN_INDICATORS = ["/login", "sign_up", "dologin", "accounts.shopee"]
@@ -119,12 +128,16 @@ def _normalize_cookie(c: dict) -> dict:
 
 def load_cookies_from_file(path: str) -> list[dict]:
     if not os.path.exists(path):
-        log.warning("Arquivo de cookies %s não encontrado. Usando lista vazia.", path)
+        log.warning("Arquivo de cookies %s não encontrado.", path)
         return []
-    data = json.loads(Path(path).read_text(encoding="utf-8"))
-    if isinstance(data, dict) and "cookies" in data:
-        data = data["cookies"]
-    return [_normalize_cookie(c) for c in data]
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+        if isinstance(data, dict) and "cookies" in data:
+            data = data["cookies"]
+        return [_normalize_cookie(c) for c in data]
+    except Exception as e:
+        log.error("Erro ao carregar cookies: %s", e)
+        return []
 
 async def inject_cookies(context: BrowserContext, path: str) -> None:
     cookies = load_cookies_from_file(path)
@@ -143,9 +156,16 @@ def build_url(product_id: str) -> str:
 async def navigate(page: Page, product_id: str) -> str | None:
     url = build_url(product_id)
     try:
+        log.info("Navegando para %s", url)
         response = await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
+        
+        # Pequena espera para garantir que redirecionamentos de login aconteçam
+        await asyncio.sleep(2)
+        
         if is_session_expired(page.url):
+            log.error("Sessão expirada! Redirecionado para: %s", page.url)
             return "sessão expirada"
+        
         if response and response.status >= 400:
             return f"HTTP {response.status}"
         return None
@@ -154,17 +174,27 @@ async def navigate(page: Page, product_id: str) -> str | None:
 
 async def find_and_click_tab(page: Page) -> bool:
     try:
-        await page.wait_for_selector(NAV_TAB_SELECTOR, timeout=10_000)
+        # Espera as abas aparecerem
+        await page.wait_for_selector(NAV_TAB_SELECTOR, timeout=15_000)
         tabs = await page.query_selector_all(NAV_TAB_SELECTOR)
+        
+        found_texts = []
         for tab in tabs:
             text = (await tab.inner_text()).strip().lower()
-            if any(t in text for t in CREATORS_TAB_TEXTS):
-                await tab.scroll_into_view_if_needed()
-                await tab.click()
-                await page.wait_for_load_state("networkidle", timeout=10_000)
-                return True
-    except Exception:
-        pass
+            if text:
+                found_texts.append(text)
+                if any(t in text for t in CREATORS_TAB_TEXTS):
+                    log.info("Aba encontrada: '%s'. Clicando...", text)
+                    await tab.scroll_into_view_if_needed()
+                    await tab.click()
+                    # Espera o conteúdo da aba carregar
+                    await asyncio.sleep(2)
+                    return True
+        
+        log.warning("Abas encontradas na página: %s", found_texts)
+    except Exception as e:
+        log.debug("Erro ao procurar abas: %s", e)
+    
     return False
 
 _SCROLL_JS = """
@@ -177,7 +207,7 @@ _SCROLL_JS = """
         window.scrollBy(0, 1000);
         const n = document.querySelectorAll(sel).length;
         
-        if (n !== lastCount) {
+        if (n !== lastCount && n > 0) {
             lastCount = n;
             if (timer) { clearTimeout(timer); timer = null; }
         } else if (!timer) {
@@ -193,13 +223,12 @@ _SCROLL_JS = """
         }
     };
 
-    const iv = setInterval(tick, 500);
+    const iv = setInterval(tick, 800);
 })
 """
 
-async def scroll_and_wait(page: Page, stable_ms: int = 3000, max_ms: int = 60_000) -> int:
+async def scroll_and_wait(page: Page, stable_ms: int = 3000, max_ms: int = 30_000) -> int:
     count = await page.evaluate(_SCROLL_JS, VIDEO_ITEM_SELECTORS, stable_ms, max_ms)
-    log.debug("Scroll finalizado. Total encontrado: %d", count)
     return count
 
 async def count_videos(page: Page) -> tuple[int | None, str | None]:
@@ -212,42 +241,73 @@ async def count_videos(page: Page) -> tuple[int | None, str | None]:
             continue
     return None, None
 
-async def process_product(page: Page, pid: str, threshold: int, screenshot: bool) -> ProductResult:
+async def process_product(page: Page, pid: str, threshold: int) -> ProductResult:
     t0 = time.monotonic()
+    
+    # Tenta navegar
     err = await navigate(page, pid)
-    if err: return ProductResult(pid, None, "expired" if "expirada" in err else "error", err, elapsed_s=round(time.monotonic()-t0, 2))
+    if err: 
+        return ProductResult(pid, None, "expired" if "expirada" in err else "error", err, elapsed_s=round(time.monotonic()-t0, 2))
 
+    # Tenta encontrar a aba
     if not await find_and_click_tab(page):
         return ProductResult(pid, None, "no_tab", "aba não encontrada", elapsed_s=round(time.monotonic()-t0, 2))
 
+    # Scroll para carregar vídeos
     await scroll_and_wait(page)
+    
+    # Conta os vídeos
     count, selector = await count_videos(page)
 
     if count is None:
-        return ProductResult(pid, None, "error", "nenhum vídeo detectado", elapsed_s=round(time.monotonic()-t0, 2))
+        # Tenta uma última vez sem scroll caso o seletor tenha aparecido agora
+        count, selector = await count_videos(page)
+        if count is None:
+            return ProductResult(pid, None, "error", "nenhum vídeo detectado na aba", elapsed_s=round(time.monotonic()-t0, 2))
     
     status = "blue_ocean" if count < threshold else "competed"
     return ProductResult(pid, count, status, selector_used=selector, elapsed_s=round(time.monotonic()-t0, 2))
 
 async def run(ids: list[str], cookies: str, concurrency: int, rps: float, threshold: int, headless: bool) -> list[ProductResult]:
     async with async_playwright() as pw:
-        launch_args = ["--disable-blink-features=AutomationControlled"]
+        launch_args = [
+            "--disable-blink-features=AutomationControlled",
+            "--no-sandbox",
+            "--disable-setuid-sandbox"
+        ]
+        
         browser = await pw.chromium.launch(
             headless=headless, 
             executable_path=CHROMIUM_EXEC, 
             args=launch_args
         )
-        context = await browser.new_context(user_agent=MOBILE_UA, viewport={"width": 390, "height": 844}, ignore_https_errors=True)
+        
+        context = await browser.new_context(
+            user_agent=MOBILE_UA, 
+            viewport={"width": 390, "height": 844}, 
+            ignore_https_errors=True,
+            locale="pt-BR"
+        )
+        
+        # Script para evitar detecção de bot
+        await context.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', { get: () => false });
+        """)
+        
         await inject_cookies(context, cookies)
         
         results = []
         for pid in ids:
             page = await context.new_page()
             try:
-                res = await process_product(page, pid, threshold, False)
+                res = await process_product(page, pid, threshold)
                 results.append(res)
+                # Respeita o RPS
+                if len(ids) > 1:
+                    await asyncio.sleep(1.0 / rps)
             finally:
                 await page.close()
+        
         await browser.close()
         return results
 
@@ -257,16 +317,23 @@ def main():
     p.add_argument("--cookies", required=True)
     p.add_argument("--threshold", type=int, default=5)
     p.add_argument("--headless", action="store_true", default=True)
+    p.add_argument("--debug", action="store_true")
     args = p.parse_args()
     
-    setup_logging()
+    setup_logging(args.debug)
     ids = [x.strip() for x in args.products.split(",")]
+    
+    log.info("Iniciando contagem para %d produtos...", len(ids))
     results = asyncio.run(run(ids, args.cookies, 1, 1, args.threshold, args.headless))
     
     print(f"\n{'ID':<25} {'Videos':<10} {'Status'}")
     print("-" * 50)
     for r in results:
-        print(f"{r.product_id:<25} {r.video_count if r.video_count is not None else 'N/A':<10} {r.status}")
+        v_str = str(r.video_count) if r.video_count is not None else "N/A"
+        print(f"{r.product_id:<25} {v_str:<10} {r.status}")
+    
+    if any(r.status == "no_tab" for r in results):
+        print("\n[DICA] Alguns produtos retornaram 'no_tab'. Verifique o arquivo 'scraper.log' para ver quais abas foram detectadas.")
 
 if __name__ == "__main__":
     main()
