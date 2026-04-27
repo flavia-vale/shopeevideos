@@ -1,6 +1,6 @@
 """
-Shopee Video Counter - v2.1 (API Based)
-Conta vídeos usando a API interna do aplicativo Shopee.
+Shopee Video Counter - v2.2 (Super Stealth)
+Tenta capturar tokens dinamicamente e conta vídeos via API.
 """
 
 import argparse
@@ -40,7 +40,8 @@ log = logging.getLogger("shopee")
 # ── Configurações ────────────────────────────────────────────────────────────
 
 API_URL = "https://sv.shopee.com.br/api/v2/timeline/unify/common"
-APP_USER_AGENT = "iOS app iPhone Shopee appver=37235 language=pt-BR app_type=1 platform=native_ios os_ver=26.3.1 Cronet/102.0.5005.61"
+# User-Agent de um iPhone real para despistar
+APP_USER_AGENT = "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Shopee/3.0.1"
 
 @dataclass
 class ProductResult:
@@ -64,41 +65,61 @@ def load_cookies(path: str) -> dict:
         return {}
 
 async def get_video_count_api(shop_id: int, item_id: int, cookies: dict) -> int:
-    csrftoken = cookies.get("csrftoken", "")
-    
-    headers = {
-        "User-Agent": APP_USER_AGENT,
-        "Content-Type": "application/json",
-        "X-CSRFToken": csrftoken,
-        "Referer": f"https://shopee.com.br/product/{shop_id}/{item_id}",
-        "x-requested-from": "rn",
-    }
+    async with httpx.AsyncClient(timeout=30.0, follow_redirects=True, http2=True) as client:
+        # PASSO 1: Visitar a página do produto para "esquentar" a sessão e pegar o csrftoken
+        product_url = f"https://shopee.com.br/product/{shop_id}/{item_id}"
+        log.info(f"Visitando produto para capturar tokens: {shop_id}/{item_id}")
+        
+        initial_headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+            "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+        }
+        
+        resp = await client.get(product_url, headers=initial_headers, cookies=cookies)
+        
+        # Atualiza os cookies com o que o servidor mandou de volta (incluindo o csrftoken)
+        current_cookies = dict(client.cookies)
+        current_cookies.update(cookies)
+        
+        csrftoken = current_cookies.get("csrftoken", "")
+        if not csrftoken:
+            log.warning("csrftoken não encontrado nos cookies. Tentando prosseguir mesmo assim...")
 
-    payload = {
-        "limit": 20,
-        "page_context": json.dumps({
-            "item_id": item_id,
-            "shop_id": shop_id,
-            "offset": 0,
-            "template_tab_id": "5",
-            "order_type": 1
-        }),
-        "device_id": "204E33D7540D48258995F115C7930559",
-        "request_type": 0,
-        "lang": "pt-BR",
-        "page_no": 1,
-        "need_product_v2": True,
-        "product_v2_scene": "affiliate_video_common_timeline"
-    }
+        # PASSO 2: Fazer a chamada da API de vídeos
+        headers = {
+            "User-Agent": APP_USER_AGENT,
+            "Content-Type": "application/json",
+            "X-CSRFToken": csrftoken,
+            "Referer": product_url,
+            "x-requested-from": "rn",
+            "x-api-sdk-version": "3.0.1",
+            "Origin": "https://shopee.com.br"
+        }
 
-    async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-        response = await client.post(API_URL, json=payload, headers=headers, cookies=cookies)
+        payload = {
+            "limit": 20,
+            "page_context": json.dumps({
+                "item_id": item_id,
+                "shop_id": shop_id,
+                "offset": 0,
+                "template_tab_id": "5",
+                "order_type": 1
+            }),
+            "request_type": 0,
+            "lang": "pt-BR",
+            "page_no": 1,
+            "need_product_v2": True,
+            "product_v2_scene": "affiliate_video_common_timeline"
+        }
+
+        response = await client.post(API_URL, json=payload, headers=headers, cookies=current_cookies)
         
         if response.status_code == 200:
             data = response.json()
             return data.get("data", {}).get("total_count", 0)
         elif response.status_code == 418:
-            log.error("Bloqueio 418: Cookies expirados ou falta csrftoken.")
+            log.error("Bloqueio 418: Anti-bot detectado. Tente renovar os cookies no navegador.")
             return -1
         else:
             log.error("Erro API: %d - %s", response.status_code, response.text)
@@ -119,12 +140,13 @@ async def process_product(pid: str, cookies: dict, threshold: int) -> ProductRes
         count = await get_video_count_api(shop_id, item_id, cookies)
         
         if count == -1:
-            return ProductResult(pid, None, "expired", "Erro 418 - Renove os cookies")
+            return ProductResult(pid, None, "expired", "Bloqueio 418 - Anti-bot")
             
         status = "blue_ocean" if count < threshold else "competed"
         return ProductResult(pid, count, status, elapsed_s=round(time.monotonic()-t0, 2))
         
     except Exception as e:
+        log.exception("Erro ao processar produto")
         return ProductResult(pid, None, "error", str(e))
 
 async def run(ids: list[str], cookies_path: str, threshold: int) -> list[ProductResult]:
@@ -133,7 +155,8 @@ async def run(ids: list[str], cookies_path: str, threshold: int) -> list[Product
     for pid in ids:
         res = await process_product(pid, cookies, threshold)
         results.append(res)
-        await asyncio.sleep(1.0)
+        # Delay maior entre produtos para evitar detecção
+        await asyncio.sleep(2.0)
     return results
 
 def main():
