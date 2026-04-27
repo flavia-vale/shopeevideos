@@ -1,5 +1,6 @@
 """
-Diagnose — valida seletores CSS e Shadow DOM em uma página de produto real.
+Diagnose — v2.0
+Agora com captura de tela para depuração visual.
 """
 
 import argparse
@@ -7,6 +8,7 @@ import asyncio
 import json
 import os
 from pathlib import Path
+from datetime import datetime
 
 from playwright.async_api import async_playwright
 
@@ -32,85 +34,71 @@ def _normalize_cookie(c: dict) -> dict:
         normalized["expires"] = int(expires)
     return normalized
 
-PROBE_SELECTORS = [
-    "[data-sqe='video-item']",
-    "[data-testid='video-item']",
-    "._3X5KM",
-    ".creator-video-item",
-    "div[class*='VideoCard']",
-    "div[class*='video-card']",
-    "div[class*='video'] div[class*='item']",
-    "[role='tab']",
-    "div[class*='tab'] span",
-    "li[class*='tab'] span",
-    "button",
-    "a"
-]
-
 async def diagnose(product_id: str, cookies_path: str, headless: bool) -> None:
-    url = f"{SHOPEE_BASE}/product/{product_id}" if "/" in product_id else f"{SHOPEE_BASE}/product/{product_id}"
+    url = f"{SHOPEE_BASE}/product/{product_id}"
+    timestamp = datetime.now().strftime("%H%M%S")
+    screenshot_path = f"debug_shopee_{timestamp}.png"
 
     async with async_playwright() as pw:
+        print(f"\n[1] Iniciando navegador (Headless: {headless})...")
         browser = await pw.chromium.launch(headless=headless, args=["--disable-blink-features=AutomationControlled"])
+        
+        # Testando com User Agent de Desktop para ver se a aba aparece melhor
         context = await browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            viewport={"width": 1280, "height": 800},
+            viewport={"width": 1280, "height": 900},
             locale="pt-BR"
         )
 
         if os.path.exists(cookies_path):
-            raw = json.loads(Path(cookies_path).read_text(encoding="utf-8"))
-            if isinstance(raw, dict) and "cookies" in raw: raw = raw["cookies"]
-            await context.add_cookies([_normalize_cookie(c) for c in raw])
+            print(f"[2] Carregando cookies de {cookies_path}...")
+            try:
+                raw = json.loads(Path(cookies_path).read_text(encoding="utf-8"))
+                if isinstance(raw, dict) and "cookies" in raw: raw = raw["cookies"]
+                await context.add_cookies([_normalize_cookie(c) for c in raw])
+                print("    Cookies injetados com sucesso.")
+            except Exception as e:
+                print(f"    Erro ao carregar cookies: {e}")
+        else:
+            print(f"[!] AVISO: Arquivo {cookies_path} não encontrado. Rodando sem login.")
 
         page = await context.new_page()
-        print(f"\n[1] Abrindo {url}...")
+        print(f"[3] Navegando para: {url}")
         
         try:
-            await page.goto(url, wait_until="networkidle", timeout=60_000)
+            await page.goto(url, wait_until="domcontentloaded", timeout=60_000)
+            # Espera um pouco mais para o conteúdo dinâmico
+            await page.wait_for_timeout(8000)
         except Exception as e:
-            print(f"    Erro ao carregar: {e}")
+            print(f"    Erro na navegação: {e}")
 
-        print(f"    URL final: {page.url}")
         print(f"    Título: {await page.title()}")
-
-        # Verifica se há sinais de bloqueio
-        content = await page.content()
-        if "verify" in content.lower() or "robot" in content.lower() or "captcha" in content.lower():
-            print("\n[!] ALERTA: Detectada tela de verificação/captcha!")
-            if headless:
-                print("    DICA: Rode com --no-headless para resolver o captcha manualmente.")
-            else:
-                print("    Aguardando você resolver o captcha no navegador...")
-                await page.wait_for_timeout(15000)
-
-        print("\n[2] Analisando elementos (aguardando 5s para renderização)...")
-        await page.wait_for_timeout(5000)
         
-        print(f"    {'Seletor':<45} {'Encontrados':>11}")
-        print("    " + "-" * 58)
-        for sel in PROBE_SELECTORS:
+        # Tira o print da tela
+        await page.screenshot(path=screenshot_path, full_page=False)
+        print(f"\n[4] SCREENSHOT SALVA: {screenshot_path}")
+        print("    Abra esse arquivo na sua pasta para ver o que o robô está vendo.")
+
+        # Analisa textos de botões e abas
+        print("\n[5] Analisando botões e textos na página:")
+        elements = await page.query_selector_all("button, span, div[role='tab']")
+        found_creators = False
+        for el in elements:
             try:
-                els = await page.query_selector_all(sel)
-                found = len(els)
-                mark = " <-- ATIVO" if found > 0 else ""
-                print(f"    {sel:<45} {found:>11}{mark}")
+                txt = (await el.inner_text()).strip()
+                if txt and len(txt) < 50:
+                    if "criador" in txt.lower() or "video" in txt.lower() or "aprender" in txt.lower():
+                        print(f"    -> ENCONTRADO: '{txt}'")
+                        found_creators = True
             except: pass
+        
+        if not found_creators:
+            print("    Nenhuma aba de vídeos/criadores detectada no texto da página.")
 
-        print("\n[3] Textos das abas:")
-        tabs = await page.query_selector_all("[role='tab'], .shopee-tabs__tab, button")
-        for t in tabs:
-            txt = (await t.inner_text()).strip()
-            if txt:
-                mark = " <-- CRIADORES" if "criador" in txt.lower() or "video" in txt.lower() else ""
-                print(f"    '{txt}'{mark}")
-
-        print("\nDiagnóstico concluído.")
         if not headless:
-            print("Feche a janela do navegador para encerrar.")
-            while True:
-                if browser.is_connected(): await asyncio.sleep(1)
-                else: break
+            print("\nNavegador aberto. Verifique a tela e feche quando terminar.")
+            while browser.is_connected():
+                await asyncio.sleep(1)
         else:
             await browser.close()
 
