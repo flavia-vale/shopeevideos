@@ -1,6 +1,6 @@
 """
-Shopee Video Counter - v1.1
-Conta vídeos na aba "Aprender com criadores" para identificar Oceanos Azuis.
+Shopee Video Counter - v1.2
+Agora com suporte para fechar modais de idioma e melhor detecção.
 """
 
 import argparse
@@ -80,9 +80,9 @@ NAV_TAB_SELECTOR = (
 LOGIN_INDICATORS = ["/login", "sign_up", "dologin", "accounts.shopee"]
 
 MOBILE_UA = (
-    "Mozilla/5.0 (Linux; Android 13; Pixel 7) "
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/124.0.0.0 Mobile Safari/537.36"
+    "Chrome/124.0.0.0 Safari/537.36"
 )
 
 @dataclass
@@ -114,79 +114,59 @@ def _normalize_cookie(c: dict) -> dict:
         normalized["expires"] = int(expires)
     return normalized
 
-def load_cookies_from_file(path: str) -> list[dict]:
-    if not os.path.exists(path):
-        log.warning("Arquivo de cookies %s não encontrado.", path)
-        return []
+async def handle_modals(page: Page):
+    """Fecha modais que bloqueiam a tela, como seleção de idioma."""
     try:
-        data = json.loads(Path(path).read_text(encoding="utf-8"))
-        if isinstance(data, dict) and "cookies" in data:
-            data = data["cookies"]
-        return [_normalize_cookie(c) for c in data]
-    except Exception as e:
-        log.error("Erro ao carregar cookies: %s", e)
-        return []
+        # Procura pelo botão de idioma "Português (BR)"
+        lang_button = page.get_by_role("button", name="Português (BR)").or_(page.get_by_text("Português (BR)")).first
+        if await lang_button.is_visible(timeout=3000):
+            log.info("Modal de idioma detectado. Clicando em 'Português (BR)'...")
+            await lang_button.click()
+            await asyncio.sleep(1)
+    except Exception:
+        pass
 
 async def inject_cookies(context: BrowserContext, path: str) -> None:
-    cookies = load_cookies_from_file(path)
-    if cookies:
-        await context.add_cookies(cookies)
-
-def is_session_expired(url: str) -> bool:
-    return any(indicator in url for indicator in LOGIN_INDICATORS)
-
-def build_url(product_id: str) -> str:
-    if "/" in product_id:
-        shop_id, item_id = product_id.split("/", 1)
-        return f"{SHOPEE_BASE}/product/{shop_id}/{item_id}"
-    return f"{SHOPEE_BASE}/product/{product_id}"
+    if not os.path.exists(path): return
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+        if isinstance(data, dict) and "cookies" in data: data = data["cookies"]
+        await context.add_cookies([_normalize_cookie(c) for c in data])
+    except Exception as e:
+        log.error("Erro ao carregar cookies: %s", e)
 
 async def navigate(page: Page, product_id: str) -> str | None:
-    url = build_url(product_id)
+    url = f"{SHOPEE_BASE}/product/{product_id}"
     try:
         log.info("Navegando para %s", url)
-        response = await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
-        await asyncio.sleep(5) # Aumentado para garantir carregamento
+        await page.goto(url, wait_until="domcontentloaded", timeout=45_000)
+        await asyncio.sleep(3)
         
-        title = await page.title()
-        log.debug("Título da página: %s", title)
+        # Tenta fechar modais antes de prosseguir
+        await handle_modals(page)
         
-        if "robot" in title.lower() or "human" in title.lower() or "verificação" in title.lower():
-            return "bloqueio por bot detection"
-            
-        if is_session_expired(page.url):
+        if any(ind in page.url for ind in LOGIN_INDICATORS):
             return "sessão expirada"
-        if response and response.status >= 400:
-            return f"HTTP {response.status}"
         return None
     except PWTimeout:
         return "timeout ao navegar"
 
 async def find_and_click_tab(page: Page) -> bool:
     try:
-        # Tenta esperar pelas abas aparecerem
-        await page.wait_for_selector(NAV_TAB_SELECTOR, timeout=15_000)
+        # Espera as abas aparecerem
+        await page.wait_for_selector(NAV_TAB_SELECTOR, timeout=10_000)
         tabs = await page.query_selector_all(NAV_TAB_SELECTOR)
         
-        found_texts = []
         for tab in tabs:
             text = (await tab.inner_text()).strip().lower()
-            if text:
-                found_texts.append(text)
-                if any(t in text for t in CREATORS_TAB_TEXTS):
-                    log.info("Aba encontrada: '%s'. Clicando...", text)
-                    await tab.scroll_into_view_if_needed()
-                    await tab.click()
-                    await asyncio.sleep(2)
-                    return True
-        
-        log.warning("Abas encontradas na página: %s", found_texts)
-    except Exception as e:
-        log.debug("Erro ao procurar abas: %s", e)
-        # Se falhar, tenta ver se a página tem conteúdo mínimo
-        content = await page.content()
-        if len(content) < 1000:
-            log.error("Página parece estar vazia ou bloqueada.")
+            if any(t in text for t in CREATORS_TAB_TEXTS):
+                log.info("Aba encontrada: '%s'. Clicando...", text)
+                await tab.scroll_into_view_if_needed()
+                await tab.click()
+                await asyncio.sleep(2)
+                return True
+    except Exception:
+        pass
     return False
 
 _SCROLL_JS = """
@@ -196,7 +176,7 @@ _SCROLL_JS = """
     const startTime = Date.now();
 
     const tick = () => {
-        window.scrollBy(0, 1000);
+        window.scrollBy(0, 800);
         const n = document.querySelectorAll(sel).length;
         if (n !== lastCount && n > 0) {
             lastCount = n;
@@ -212,50 +192,41 @@ _SCROLL_JS = """
             resolve(lastCount);
         }
     };
-    const iv = setInterval(tick, 800);
+    const iv = setInterval(tick, 600);
 })
 """
-
-async def scroll_and_wait(page: Page, stable_ms: int = 3000, max_ms: int = 30_000) -> int:
-    count = await page.evaluate(_SCROLL_JS, VIDEO_ITEM_SELECTORS, stable_ms, max_ms)
-    return count
-
-async def count_videos(page: Page) -> tuple[int | None, str | None]:
-    for sel in VIDEO_ITEM_SELECTORS:
-        try:
-            elements = await page.query_selector_all(sel)
-            if elements and len(elements) > 0:
-                return len(elements), sel
-        except Exception:
-            continue
-    return None, None
 
 async def process_product(page: Page, pid: str, threshold: int) -> ProductResult:
     t0 = time.monotonic()
     err = await navigate(page, pid)
-    if err: 
-        return ProductResult(pid, None, "expired" if "expirada" in err else "error", err, elapsed_s=round(time.monotonic()-t0, 2))
+    if err: return ProductResult(pid, None, "error", err, elapsed_s=round(time.monotonic()-t0, 2))
 
     if not await find_and_click_tab(page):
-        return ProductResult(pid, None, "no_tab", "aba não encontrada", elapsed_s=round(time.monotonic()-t0, 2))
+        # Tenta um scroll rápido caso a aba esteja escondida
+        await page.evaluate("window.scrollBy(0, 500)")
+        await asyncio.sleep(1)
+        if not await find_and_click_tab(page):
+            return ProductResult(pid, None, "no_tab", "aba não encontrada", elapsed_s=round(time.monotonic()-t0, 2))
 
-    await scroll_and_wait(page)
-    count, selector = await count_videos(page)
+    await page.evaluate(_SCROLL_JS, VIDEO_ITEM_SELECTORS, 3000, 20000)
+    
+    count, selector = None, None
+    for sel in VIDEO_ITEM_SELECTORS:
+        els = await page.query_selector_all(sel)
+        if els:
+            count, selector = len(els), sel
+            break
 
     if count is None:
-        count, selector = await count_videos(page)
-        if count is None:
-            return ProductResult(pid, None, "error", "nenhum vídeo detectado na aba", elapsed_s=round(time.monotonic()-t0, 2))
+        return ProductResult(pid, None, "error", "nenhum vídeo detectado", elapsed_s=round(time.monotonic()-t0, 2))
     
     status = "blue_ocean" if count < threshold else "competed"
     return ProductResult(pid, count, status, selector_used=selector, elapsed_s=round(time.monotonic()-t0, 2))
 
 async def run(ids: list[str], cookies: str, concurrency: int, rps: float, threshold: int, headless: bool) -> list[ProductResult]:
     async with async_playwright() as pw:
-        launch_args = ["--disable-blink-features=AutomationControlled", "--no-sandbox"]
-        browser = await pw.chromium.launch(headless=headless, args=launch_args)
-        context = await browser.new_context(user_agent=MOBILE_UA, viewport={"width": 390, "height": 844}, ignore_https_errors=True, locale="pt-BR")
-        await context.add_init_script("Object.defineProperty(navigator, 'webdriver', { get: () => false });")
+        browser = await pw.chromium.launch(headless=headless, args=["--disable-blink-features=AutomationControlled"])
+        context = await browser.new_context(user_agent=MOBILE_UA, viewport={"width": 1280, "height": 800})
         await inject_cookies(context, cookies)
         
         results = []
@@ -271,27 +242,21 @@ async def run(ids: list[str], cookies: str, concurrency: int, rps: float, thresh
         return results
 
 def main():
-    p = argparse.ArgumentParser(description="Shopee Video Counter")
-    p.add_argument("--products", required=True, help="IDs dos produtos separados por vírgula")
-    p.add_argument("--cookies", default="cookies.json", help="Caminho para o arquivo de cookies (padrao: cookies.json)")
-    p.add_argument("--threshold", type=int, default=5, help="Limite para Oceano Azul")
-    p.add_argument("--no-headless", action="store_false", dest="headless", help="Desativa o modo headless")
-    p.add_argument("--debug", action="store_true", help="Ativa logs detalhados")
+    p = argparse.ArgumentParser()
+    p.add_argument("--products", required=True)
+    p.add_argument("--cookies", default="cookies.json")
+    p.add_argument("--threshold", type=int, default=5)
+    p.add_argument("--no-headless", action="store_false", dest="headless")
+    p.add_argument("--debug", action="store_true")
     p.set_defaults(headless=True)
-    
     args = p.parse_args()
     
     setup_logging(args.debug)
     ids = [x.strip() for x in args.products.split(",")]
-    
-    log.info("Iniciando contagem para %d produtos...", len(ids))
     results = asyncio.run(run(ids, args.cookies, 1, 1, args.threshold, args.headless))
     
-    print(f"\n{'ID':<25} {'Videos':<10} {'Status'}")
-    print("-" * 50)
     for r in results:
-        v_str = str(r.video_count) if r.video_count is not None else "N/A"
-        print(f"{r.product_id:<25} {v_str:<10} {r.status}")
+        print(f"{r.product_id:<25} {r.video_count if r.video_count is not None else 'N/A':<10} {r.status}")
 
 if __name__ == "__main__":
     main()

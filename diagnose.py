@@ -1,6 +1,6 @@
 """
-Diagnose — v2.0
-Agora com captura de tela para depuração visual.
+Diagnose — v2.1
+Agora com fechamento automático de modal de idioma.
 """
 
 import argparse
@@ -40,10 +40,8 @@ async def diagnose(product_id: str, cookies_path: str, headless: bool) -> None:
     screenshot_path = f"debug_shopee_{timestamp}.png"
 
     async with async_playwright() as pw:
-        print(f"\n[1] Iniciando navegador (Headless: {headless})...")
+        print(f"\n[1] Iniciando navegador...")
         browser = await pw.chromium.launch(headless=headless, args=["--disable-blink-features=AutomationControlled"])
-        
-        # Testando com User Agent de Desktop para ver se a aba aparece melhor
         context = await browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
             viewport={"width": 1280, "height": 900},
@@ -51,54 +49,43 @@ async def diagnose(product_id: str, cookies_path: str, headless: bool) -> None:
         )
 
         if os.path.exists(cookies_path):
-            print(f"[2] Carregando cookies de {cookies_path}...")
             try:
                 raw = json.loads(Path(cookies_path).read_text(encoding="utf-8"))
                 if isinstance(raw, dict) and "cookies" in raw: raw = raw["cookies"]
                 await context.add_cookies([_normalize_cookie(c) for c in raw])
-                print("    Cookies injetados com sucesso.")
-            except Exception as e:
-                print(f"    Erro ao carregar cookies: {e}")
-        else:
-            print(f"[!] AVISO: Arquivo {cookies_path} não encontrado. Rodando sem login.")
+                print("[2] Cookies injetados.")
+            except: pass
 
         page = await context.new_page()
         print(f"[3] Navegando para: {url}")
-        
-        try:
-            await page.goto(url, wait_until="domcontentloaded", timeout=60_000)
-            # Espera um pouco mais para o conteúdo dinâmico
-            await page.wait_for_timeout(8000)
-        except Exception as e:
-            print(f"    Erro na navegação: {e}")
+        await page.goto(url, wait_until="domcontentloaded")
+        await page.wait_for_timeout(3000)
 
-        print(f"    Título: {await page.title()}")
-        
-        # Tira o print da tela
-        await page.screenshot(path=screenshot_path, full_page=False)
-        print(f"\n[4] SCREENSHOT SALVA: {screenshot_path}")
-        print("    Abra esse arquivo na sua pasta para ver o que o robô está vendo.")
+        # Tenta fechar o modal de idioma
+        print("[4] Verificando modais de bloqueio...")
+        lang_button = page.get_by_role("button", name="Português (BR)").or_(page.get_by_text("Português (BR)")).first
+        if await lang_button.is_visible(timeout=3000):
+            print("    -> Modal de idioma detectado! Clicando para fechar...")
+            await lang_button.click()
+            await page.wait_for_timeout(2000)
+        else:
+            print("    -> Nenhum modal de idioma visível.")
 
-        # Analisa textos de botões e abas
-        print("\n[5] Analisando botões e textos na página:")
-        elements = await page.query_selector_all("button, span, div[role='tab']")
-        found_creators = False
-        for el in elements:
-            try:
-                txt = (await el.inner_text()).strip()
-                if txt and len(txt) < 50:
-                    if "criador" in txt.lower() or "video" in txt.lower() or "aprender" in txt.lower():
-                        print(f"    -> ENCONTRADO: '{txt}'")
-                        found_creators = True
-            except: pass
-        
-        if not found_creators:
-            print("    Nenhuma aba de vídeos/criadores detectada no texto da página.")
+        # Tira novo print após tentar fechar o modal
+        await page.screenshot(path=screenshot_path)
+        print(f"[5] SCREENSHOT ATUALIZADA: {screenshot_path}")
+
+        # Procura a aba
+        print("\n[6] Procurando abas de vídeos:")
+        tabs = await page.query_selector_all("button, span, div[role='tab']")
+        for t in tabs:
+            txt = (await t.inner_text()).strip()
+            if txt and any(x in txt.lower() for x in ["criador", "video", "aprender"]):
+                print(f"    -> ENCONTRADA: '{txt}'")
 
         if not headless:
-            print("\nNavegador aberto. Verifique a tela e feche quando terminar.")
-            while browser.is_connected():
-                await asyncio.sleep(1)
+            print("\nVerifique o navegador e feche para terminar.")
+            while browser.is_connected(): await asyncio.sleep(1)
         else:
             await browser.close()
 
