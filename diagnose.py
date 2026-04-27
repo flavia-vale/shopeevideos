@@ -9,13 +9,17 @@ Uso:
 import argparse
 import asyncio
 import json
+import os
 from pathlib import Path
 
 from playwright.async_api import async_playwright
 
 
 SHOPEE_BASE = "https://shopee.com.br"
+# Tenta o caminho do Codespace, se não existir, deixa o Playwright decidir
 CHROMIUM_EXEC = "/opt/pw-browsers/chromium-1194/chrome-linux/chrome"
+if not os.path.exists(CHROMIUM_EXEC):
+    CHROMIUM_EXEC = None
 
 
 def _normalize_cookie(c: dict) -> dict:
@@ -50,7 +54,7 @@ PROBE_SELECTORS = [
     "li[class*='tab'] span",
 ]
 
-SHADOW_PROBE_JS = """
+SHADOW_PROBE_JS = r"""
 () => {
     const results = [];
     document.querySelectorAll('*').forEach(el => {
@@ -82,11 +86,14 @@ async def diagnose(product_id: str, cookies_path: str, headless: bool) -> None:
     )
 
     async with async_playwright() as pw:
-        browser = await pw.chromium.launch(
-            headless=headless,
-            executable_path=CHROMIUM_EXEC,
-            args=["--disable-blink-features=AutomationControlled"],
-        )
+        launch_kwargs = {
+            "headless": headless,
+            "args": ["--disable-blink-features=AutomationControlled", "--no-sandbox"]
+        }
+        if CHROMIUM_EXEC:
+            launch_kwargs["executable_path"] = CHROMIUM_EXEC
+            
+        browser = await pw.chromium.launch(**launch_kwargs)
         context = await browser.new_context(
             user_agent=(
                 "Mozilla/5.0 (Linux; Android 13; Pixel 7) "
@@ -115,6 +122,9 @@ async def diagnose(product_id: str, cookies_path: str, headless: bool) -> None:
 
         final_url = page.url
         print(f"    URL final: {final_url}")
+        title = await page.title()
+        print(f"    Título da página: {title}")
+
         if any(x in final_url for x in ["/login", "sign_up", "dologin"]):
             print("    AVISO: redirecionado para login — cookies expirados!")
             await browser.close()
