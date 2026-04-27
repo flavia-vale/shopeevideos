@@ -1,9 +1,5 @@
 """
 Diagnose — valida seletores CSS e Shadow DOM em uma página de produto real.
-
-Uso:
-    python diagnose.py --product shop_id/item_id
-    python diagnose.py --product 1234567890 --no-headless
 """
 
 import argparse
@@ -47,152 +43,84 @@ PROBE_SELECTORS = [
     "[role='tab']",
     "div[class*='tab'] span",
     "li[class*='tab'] span",
+    "button",
+    "a"
 ]
 
-SHADOW_PROBE_JS = r"""
-() => {
-    const results = [];
-    document.querySelectorAll('*').forEach(el => {
-        if (!el.shadowRoot) return;
-        const host = el.tagName + (el.id ? '#' + el.id : '') +
-                     (el.className && typeof el.className === 'string'
-                         ? '.' + el.className.trim().split(/\\s+/).join('.')
-                         : '');
-        const children = el.shadowRoot.querySelectorAll('*').length;
-        results.push({ host, children });
-    });
-    return results;
-}
-"""
-
-TAB_TEXT_JS = """
-() => {
-    const tabs = document.querySelectorAll("[role='tab'], div[class*='tab'] span, li[class*='tab'] span");
-    return Array.from(tabs).map(t => t.innerText.trim()).filter(Boolean);
-}
-"""
-
-
 async def diagnose(product_id: str, cookies_path: str, headless: bool) -> None:
-    url = (
-        f"{SHOPEE_BASE}/product/{product_id}"
-        if "/" in product_id
-        else f"{SHOPEE_BASE}/product/{product_id}"
-    )
+    url = f"{SHOPEE_BASE}/product/{product_id}" if "/" in product_id else f"{SHOPEE_BASE}/product/{product_id}"
 
     async with async_playwright() as pw:
-        launch_kwargs = {
-            "headless": headless,
-            "args": ["--disable-blink-features=AutomationControlled", "--no-sandbox"]
-        }
-            
-        browser = await pw.chromium.launch(**launch_kwargs)
+        browser = await pw.chromium.launch(headless=headless, args=["--disable-blink-features=AutomationControlled"])
         context = await browser.new_context(
-            user_agent=(
-                "Mozilla/5.0 (Linux; Android 13; Pixel 7) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/124.0.0.0 Mobile Safari/537.36"
-            ),
-            viewport={"width": 390, "height": 844},
-            locale="pt-BR",
-            ignore_https_errors=True,
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            viewport={"width": 1280, "height": 800},
+            locale="pt-BR"
         )
 
-        if not os.path.exists(cookies_path):
-            print(f"Erro: Arquivo {cookies_path} nao encontrado.")
-            await browser.close()
-            return
-
-        raw = json.loads(Path(cookies_path).read_text(encoding="utf-8"))
-        if isinstance(raw, dict) and "cookies" in raw:
-            raw = raw["cookies"]
-        cookies = [_normalize_cookie(c) for c in raw]
-        await context.add_cookies(cookies)
-        await context.add_init_script("""
-            Object.defineProperty(navigator, 'webdriver', { get: () => false });
-            Object.defineProperty(navigator, 'plugins', { get: () => [] });
-            window.chrome = { runtime: { id: 'fakeId' } };
-        """)
+        if os.path.exists(cookies_path):
+            raw = json.loads(Path(cookies_path).read_text(encoding="utf-8"))
+            if isinstance(raw, dict) and "cookies" in raw: raw = raw["cookies"]
+            await context.add_cookies([_normalize_cookie(c) for c in raw])
 
         page = await context.new_page()
-        print(f"\n[1] Abrindo {url}")
-        await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
+        print(f"\n[1] Abrindo {url}...")
+        
+        try:
+            await page.goto(url, wait_until="networkidle", timeout=60_000)
+        except Exception as e:
+            print(f"    Erro ao carregar: {e}")
 
-        final_url = page.url
-        print(f"    URL final: {final_url}")
-        title = await page.title()
-        print(f"    Título da página: {title}")
+        print(f"    URL final: {page.url}")
+        print(f"    Título: {await page.title()}")
 
-        if any(x in final_url for x in ["/login", "sign_up", "dologin"]):
-            print("    AVISO: redirecionado para login — cookies expirados!")
-            await browser.close()
-            return
+        # Verifica se há sinais de bloqueio
+        content = await page.content()
+        if "verify" in content.lower() or "robot" in content.lower() or "captcha" in content.lower():
+            print("\n[!] ALERTA: Detectada tela de verificação/captcha!")
+            if headless:
+                print("    DICA: Rode com --no-headless para resolver o captcha manualmente.")
+            else:
+                print("    Aguardando você resolver o captcha no navegador...")
+                await page.wait_for_timeout(15000)
 
-        print("\n[2] Seletores CSS no DOM principal:")
+        print("\n[2] Analisando elementos (aguardando 5s para renderização)...")
+        await page.wait_for_timeout(5000)
+        
         print(f"    {'Seletor':<45} {'Encontrados':>11}")
         print("    " + "-" * 58)
         for sel in PROBE_SELECTORS:
             try:
                 els = await page.query_selector_all(sel)
                 found = len(els)
-            except Exception:
-                found = -1
-            mark = " <-- ATIVO" if found > 0 else ""
-            print(f"    {sel:<45} {found:>11}{mark}")
+                mark = " <-- ATIVO" if found > 0 else ""
+                print(f"    {sel:<45} {found:>11}{mark}")
+            except: pass
 
-        print("\n[3] Shadow DOM hosts:")
-        hosts = await page.evaluate(SHADOW_PROBE_JS)
-        if not hosts:
-            print("    Nenhum Shadow Root encontrado.")
-        else:
-            for h in hosts[:20]:
-                print(f"    {h['host'][:60]:<60}  {h['children']} filho(s)")
-            if len(hosts) > 20:
-                print(f"    ... e mais {len(hosts) - 20} hosts")
-
-        print("\n[4] Textos das abas encontradas:")
-        tab_texts = await page.evaluate(TAB_TEXT_JS)
-        if not tab_texts:
-            print("    Nenhuma aba encontrada com os seletores atuais.")
-        else:
-            for t in tab_texts:
-                mark = " <-- CRIADORES" if "criador" in t.lower() or "creator" in t.lower() else ""
-                print(f"    '{t}'{mark}")
-
-        print("\n[5] Scroll rápido para forçar lazy loading...")
-        await page.evaluate("""
-            () => new Promise(resolve => {
-                let n = 0;
-                const iv = setInterval(() => {
-                    window.scrollBy(0, 800);
-                    if (++n >= 10) { clearInterval(iv); resolve(); }
-                }, 300);
-            })
-        """)
-
-        print("\n[6] Re-contagem após scroll:")
-        for sel in PROBE_SELECTORS[:7]:
-            try:
-                els = await page.query_selector_all(sel)
-                found = len(els)
-            except Exception:
-                found = -1
-            if found > 0:
-                print(f"    {sel}: {found}")
+        print("\n[3] Textos das abas:")
+        tabs = await page.query_selector_all("[role='tab'], .shopee-tabs__tab, button")
+        for t in tabs:
+            txt = (await t.inner_text()).strip()
+            if txt:
+                mark = " <-- CRIADORES" if "criador" in txt.lower() or "video" in txt.lower() else ""
+                print(f"    '{txt}'{mark}")
 
         print("\nDiagnóstico concluído.")
-        await browser.close()
+        if not headless:
+            print("Feche a janela do navegador para encerrar.")
+            while True:
+                if browser.is_connected(): await asyncio.sleep(1)
+                else: break
+        else:
+            await browser.close()
 
-
-def main() -> None:
-    p = argparse.ArgumentParser(description="Valida seletores em página de produto Shopee")
-    p.add_argument("--product", required=True, help="ID ou shop_id/item_id do produto")
-    p.add_argument("--cookies", default="cookies.json", help="Caminho para o arquivo de cookies (padrao: cookies.json)")
-    p.add_argument("--no-headless", action="store_true", help="Abrir browser visível")
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument("--product", required=True)
+    p.add_argument("--cookies", default="cookies.json")
+    p.add_argument("--no-headless", action="store_true")
     args = p.parse_args()
-
-    asyncio.run(diagnose(args.product, args.cookies, headless=not args.no_headless))
-
+    asyncio.run(diagnose(args.product, args.cookies, not args.no_headless))
 
 if __name__ == "__main__":
     main()
