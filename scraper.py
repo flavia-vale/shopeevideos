@@ -27,7 +27,6 @@ def setup_logging(debug: bool = False) -> logging.Logger:
     level = logging.DEBUG if debug else logging.INFO
     fmt = "%(asctime)s [%(levelname)s] %(message)s"
     
-    # Limpa handlers existentes para evitar duplicidade
     for handler in logging.root.handlers[:]:
         logging.root.removeHandler(handler)
         
@@ -55,7 +54,9 @@ CREATORS_TAB_TEXTS = [
     "vídeos", 
     "videos", 
     "criadores",
-    "ver vídeos"
+    "ver vídeos",
+    "vídeos do produto",
+    "inspiração"
 ]
 
 VIDEO_ITEM_SELECTORS = [
@@ -73,7 +74,8 @@ NAV_TAB_SELECTOR = (
     "div[class*='tab'] span, "
     "li[class*='tab'] span, "
     "div[class*='Tab'] span, "
-    ".shopee-tabs__tab"
+    ".shopee-tabs__tab, "
+    "._2u_8_X" # Seletor genérico de abas mobile
 )
 
 LOGIN_INDICATORS = ["/login", "sign_up", "dologin", "accounts.shopee"]
@@ -145,7 +147,7 @@ async def navigate(page: Page, product_id: str) -> str | None:
     try:
         log.info("Navegando para %s", url)
         response = await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
-        await asyncio.sleep(2)
+        await asyncio.sleep(3) # Espera um pouco mais para carregar abas
         if is_session_expired(page.url):
             return "sessão expirada"
         if response and response.status >= 400:
@@ -156,7 +158,8 @@ async def navigate(page: Page, product_id: str) -> str | None:
 
 async def find_and_click_tab(page: Page) -> bool:
     try:
-        await page.wait_for_selector(NAV_TAB_SELECTOR, timeout=15_000)
+        # Tenta esperar pelas abas aparecerem
+        await page.wait_for_selector(NAV_TAB_SELECTOR, timeout=10_000)
         tabs = await page.query_selector_all(NAV_TAB_SELECTOR)
         
         found_texts = []
@@ -171,7 +174,7 @@ async def find_and_click_tab(page: Page) -> bool:
                     await asyncio.sleep(2)
                     return True
         
-        log.debug("Abas encontradas na página: %s", found_texts)
+        log.warning("Abas encontradas na página: %s", found_texts)
     except Exception as e:
         log.debug("Erro ao procurar abas: %s", e)
     return False
