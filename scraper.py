@@ -75,7 +75,7 @@ NAV_TAB_SELECTOR = (
     "li[class*='tab'] span, "
     "div[class*='Tab'] span, "
     ".shopee-tabs__tab, "
-    "._2u_8_X" # Seletor genérico de abas mobile
+    "._2u_8_X"
 )
 
 LOGIN_INDICATORS = ["/login", "sign_up", "dologin", "accounts.shopee"]
@@ -147,7 +147,14 @@ async def navigate(page: Page, product_id: str) -> str | None:
     try:
         log.info("Navegando para %s", url)
         response = await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
-        await asyncio.sleep(3) # Espera um pouco mais para carregar abas
+        await asyncio.sleep(5) # Aumentado para garantir carregamento
+        
+        title = await page.title()
+        log.debug("Título da página: %s", title)
+        
+        if "robot" in title.lower() or "human" in title.lower() or "verificação" in title.lower():
+            return "bloqueio por bot detection"
+            
         if is_session_expired(page.url):
             return "sessão expirada"
         if response and response.status >= 400:
@@ -159,7 +166,7 @@ async def navigate(page: Page, product_id: str) -> str | None:
 async def find_and_click_tab(page: Page) -> bool:
     try:
         # Tenta esperar pelas abas aparecerem
-        await page.wait_for_selector(NAV_TAB_SELECTOR, timeout=10_000)
+        await page.wait_for_selector(NAV_TAB_SELECTOR, timeout=15_000)
         tabs = await page.query_selector_all(NAV_TAB_SELECTOR)
         
         found_texts = []
@@ -177,6 +184,10 @@ async def find_and_click_tab(page: Page) -> bool:
         log.warning("Abas encontradas na página: %s", found_texts)
     except Exception as e:
         log.debug("Erro ao procurar abas: %s", e)
+        # Se falhar, tenta ver se a página tem conteúdo mínimo
+        content = await page.content()
+        if len(content) < 1000:
+            log.error("Página parece estar vazia ou bloqueada.")
     return False
 
 _SCROLL_JS = """
