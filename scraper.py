@@ -1,6 +1,6 @@
 """
-Shopee Video Counter - v1.3
-Correção para modais persistentes e cliques interceptados.
+Shopee Video Counter - v2.0 (API Based)
+Conta vídeos usando a API interna do aplicativo Shopee mapeada via proxy.
 """
 
 import argparse
@@ -10,16 +10,11 @@ import logging
 import sys
 import time
 import os
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-
-from playwright.async_api import (
-    async_playwright,
-    BrowserContext,
-    Page,
-    TimeoutError as PWTimeout,
-)
+import httpx
 
 # ── Logging ──────────────────────────────────────────────────────────────────
 
@@ -38,52 +33,16 @@ def setup_logging(debug: bool = False) -> logging.Logger:
             logging.FileHandler("scraper.log", encoding="utf-8"),
         ],
     )
-    logging.getLogger("playwright").setLevel(logging.WARNING)
     return logging.getLogger("shopee")
 
 log = logging.getLogger("shopee")
 
 # ── Configurações ────────────────────────────────────────────────────────────
 
-SHOPEE_BASE = "https://shopee.com.br"
+API_URL = "https://sv.shopee.com.br/api/v2/timeline/unify/common"
 
-CREATORS_TAB_TEXTS = [
-    "aprender com criadores", 
-    "learn from creators", 
-    "vídeos", 
-    "videos", 
-    "criadores",
-    "ver vídeos",
-    "vídeos do produto",
-    "inspiração"
-]
-
-VIDEO_ITEM_SELECTORS = [
-    "[data-sqe='video-item']",
-    "[data-testid='video-item']",
-    "._3X5KM",
-    ".creator-video-item",
-    "div[class*='VideoCard']",
-    "div[class*='video-card']",
-    "div[class*='video'] div[class*='item']",
-]
-
-NAV_TAB_SELECTOR = (
-    "[role='tab'], "
-    "div[class*='tab'] span, "
-    "li[class*='tab'] span, "
-    "div[class*='Tab'] span, "
-    ".shopee-tabs__tab, "
-    "._2u_8_X"
-)
-
-LOGIN_INDICATORS = ["/login", "sign_up", "dologin", "accounts.shopee"]
-
-MOBILE_UA = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/124.0.0.0 Safari/537.36"
-)
+# User-Agent do aplicativo iOS capturado no proxy
+APP_USER_AGENT = "iOS app iPhone Shopee appver=37235 language=pt-BR app_type=1 platform=native_ios os_ver=26.3.1 Cronet/102.0.5005.61"
 
 @dataclass
 class ProductResult:
@@ -91,170 +50,128 @@ class ProductResult:
     video_count: int | None
     status: str = "ok"
     error: str | None = None
-    selector_used: str | None = None
     elapsed_s: float = 0.0
     timestamp: str = field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
 
-def _normalize_cookie(c: dict) -> dict:
-    VALID_SAME_SITE = {"Strict", "Lax", "None"}
-    same_site = c.get("sameSite")
-    if same_site not in VALID_SAME_SITE:
-        same_site = "None"
-    normalized: dict = {
-        "name":     c["name"],
-        "value":    c["value"],
-        "domain":   c.get("domain", ""),
-        "path":     c.get("path", "/"),
-        "secure":   bool(c.get("secure", False)),
-        "httpOnly": bool(c.get("httpOnly", False)),
-        "sameSite": same_site,
-    }
-    expires = c.get("expires") or c.get("expirationDate")
-    if expires is not None:
-        normalized["expires"] = int(expires)
-    return normalized
-
-async def handle_modals(page: Page):
-    """Fecha modais que bloqueiam a tela, como seleção de idioma."""
-    try:
-        lang_button = page.get_by_role("button", name="Português (BR)").or_(page.get_by_text("Português (BR)")).first
-        if await lang_button.is_visible(timeout=3000):
-            log.info("Modal de idioma detectado. Forçando clique em 'Português (BR)'...")
-            # force=True é essencial aqui para ignorar o overlay GIv4S4
-            await lang_button.click(force=True)
-            await asyncio.sleep(2)
-    except Exception:
-        pass
-
-async def inject_cookies(context: BrowserContext, path: str) -> None:
-    if not os.path.exists(path): return
+def load_cookies(path: str) -> dict:
+    if not os.path.exists(path):
+        log.warning("Arquivo de cookies %s não encontrado.", path)
+        return {}
     try:
         data = json.loads(Path(path).read_text(encoding="utf-8"))
-        if isinstance(data, dict) and "cookies" in data: data = data["cookies"]
-        await context.add_cookies([_normalize_cookie(c) for c in data])
+        if isinstance(data, dict) and "cookies" in data:
+            data = data["cookies"]
+        return {c["name"]: c["value"] for c in data}
     except Exception as e:
         log.error("Erro ao carregar cookies: %s", e)
+        return {}
 
-async def navigate(page: Page, product_id: str) -> str | None:
-    url = f"{SHOPEE_BASE}/product/{product_id}"
-    try:
-        log.info("Navegando para %s", url)
-        await page.goto(url, wait_until="domcontentloaded", timeout=45_000)
-        await asyncio.sleep(4)
+async def get_video_count_api(shop_id: int, item_id: int, cookies: dict) -> int:
+    """Chama a API de timeline para contar os vídeos do produto."""
+    
+    headers = {
+        "User-Agent": APP_USER_AGENT,
+        "Content-Type": "application/json",
+        "X-CSRFToken": cookies.get("csrftoken", ""),
+        "Referer": f"https://shopee.com.br/product/{shop_id}/{item_id}",
+        "Origin": "https://shopee.com.br"
+    }
+
+    # Payload capturado no proxy
+    payload = {
+        "limit": 20, # Aumentamos o limite para pegar mais vídeos de uma vez
+        "page_context": json.dumps({
+            "item_id": item_id,
+            "shop_id": shop_id,
+            "offset": 0,
+            "filter_video": None,
+            "template_tab_id": "5", # Aba de criadores
+            "order_type": 1
+        }),
+        "device_id": "204E33D7540D48258995F115C7930559",
+        "request_type": 0,
+        "ext_info": [],
+        "rcmd_source": 22,
+        "lang": "pt-BR",
+        "rec_request_info": "{\"dayPages\":1,\"sessionPages\":1,\"interactDataFromVideo\":[]}",
+        "page_no": 1,
+        "need_product_v2": True,
+        "product_v2_scene": "affiliate_video_common_timeline",
+        "ug_param": "{\"is_merge_reward\":1}"
+    }
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.post(API_URL, json=payload, headers=headers, cookies=cookies)
         
-        await handle_modals(page)
+        if response.status_code != 200:
+            log.error("Erro na API: HTTP %d", response.status_code)
+            return 0
+            
+        data = response.json()
         
-        if any(ind in page.url for ind in LOGIN_INDICATORS):
-            return "sessão expirada"
-        return None
-    except PWTimeout:
-        return "timeout ao navegar"
-
-async def find_and_click_tab(page: Page) -> bool:
-    try:
-        await page.wait_for_selector(NAV_TAB_SELECTOR, timeout=10_000)
-        tabs = await page.query_selector_all(NAV_TAB_SELECTOR)
+        # A API retorna uma lista de 'feed_list' ou similar
+        # Precisamos verificar a estrutura exata do retorno
+        feed_list = data.get("data", {}).get("feed_list", [])
         
-        for tab in tabs:
-            text = (await tab.inner_text()).strip().lower()
-            if any(t in text for t in CREATORS_TAB_TEXTS):
-                log.info("Aba encontrada: '%s'. Clicando...", text)
-                await tab.scroll_into_view_if_needed()
-                # Também usamos force=True aqui por segurança
-                await tab.click(force=True)
-                await asyncio.sleep(2)
-                return True
-    except Exception:
-        pass
-    return False
+        # Se houver paginação, o total_count pode estar presente
+        total_count = data.get("data", {}).get("total_count", len(feed_list))
+        
+        log.debug("API retornou %d vídeos para o produto %d/%d", total_count, shop_id, item_id)
+        return total_count
 
-_SCROLL_JS = """
-(selectorList, stableMs, maxMs) => new Promise((resolve) => {
-    let lastCount = 0, timer = null;
-    const sel = selectorList.join(', ');
-    const startTime = Date.now();
-
-    const tick = () => {
-        window.scrollBy(0, 800);
-        const n = document.querySelectorAll(sel).length;
-        if (n !== lastCount && n > 0) {
-            lastCount = n;
-            if (timer) { clearTimeout(timer); timer = null; }
-        } else if (!timer) {
-            timer = setTimeout(() => { 
-                clearInterval(iv); 
-                resolve(lastCount); 
-            }, stableMs);
-        }
-        if (Date.now() - startTime > maxMs) {
-            clearInterval(iv);
-            resolve(lastCount);
-        }
-    };
-    const iv = setInterval(tick, 600);
-})
-"""
-
-async def process_product(page: Page, pid: str, threshold: int) -> ProductResult:
+async def process_product(pid: str, cookies: dict, threshold: int) -> ProductResult:
     t0 = time.monotonic()
-    err = await navigate(page, pid)
-    if err: return ProductResult(pid, None, "error", err, elapsed_s=round(time.monotonic()-t0, 2))
+    try:
+        if "/" in pid:
+            shop_id, item_id = map(int, pid.split("/", 1))
+        else:
+            # Tenta extrair de URL se for o caso
+            match = re.search(r'i\.(\d+)\.(\d+)', pid)
+            if match:
+                shop_id, item_id = int(match.group(1)), int(match.group(2))
+            else:
+                return ProductResult(pid, None, "error", "ID inválido", elapsed_s=round(time.monotonic()-t0, 2))
 
-    if not await find_and_click_tab(page):
-        await page.evaluate("window.scrollBy(0, 600)")
-        await asyncio.sleep(2)
-        if not await find_and_click_tab(page):
-            return ProductResult(pid, None, "no_tab", "aba não encontrada", elapsed_s=round(time.monotonic()-t0, 2))
-
-    await page.evaluate(_SCROLL_JS, VIDEO_ITEM_SELECTORS, 3000, 20000)
-    
-    count, selector = None, None
-    for sel in VIDEO_ITEM_SELECTORS:
-        els = await page.query_selector_all(sel)
-        if els:
-            count, selector = len(els), sel
-            break
-
-    if count is None:
-        return ProductResult(pid, None, "error", "nenhum vídeo detectado", elapsed_s=round(time.monotonic()-t0, 2))
-    
-    status = "blue_ocean" if count < threshold else "competed"
-    return ProductResult(pid, count, status, selector_used=selector, elapsed_s=round(time.monotonic()-t0, 2))
-
-async def run(ids: list[str], cookies: str, concurrency: int, rps: float, threshold: int, headless: bool) -> list[ProductResult]:
-    async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=headless, args=["--disable-blink-features=AutomationControlled"])
-        context = await browser.new_context(user_agent=MOBILE_UA, viewport={"width": 1280, "height": 800})
-        await inject_cookies(context, cookies)
+        count = await get_video_count_api(shop_id, item_id, cookies)
         
-        results = []
-        for pid in ids:
-            page = await context.new_page()
-            try:
-                res = await process_product(page, pid, threshold)
-                results.append(res)
-                if len(ids) > 1: await asyncio.sleep(1.0 / rps)
-            finally:
-                await page.close()
-        await browser.close()
-        return results
+        status = "blue_ocean" if count < threshold else "competed"
+        return ProductResult(pid, count, status, elapsed_s=round(time.monotonic()-t0, 2))
+        
+    except Exception as e:
+        log.error("Erro ao processar %s: %s", pid, e)
+        return ProductResult(pid, None, "error", str(e), elapsed_s=round(time.monotonic()-t0, 2))
+
+async def run(ids: list[str], cookies_path: str, threshold: int) -> list[ProductResult]:
+    cookies = load_cookies(cookies_path)
+    results = []
+    
+    for pid in ids:
+        res = await process_product(pid, cookies, threshold)
+        results.append(res)
+        # Pequeno delay para evitar rate limit
+        await asyncio.sleep(0.5)
+        
+    return results
 
 def main():
-    p = argparse.ArgumentParser()
-    p.add_argument("--products", required=True)
-    p.add_argument("--cookies", default="cookies.json")
-    p.add_argument("--threshold", type=int, default=5)
-    p.add_argument("--no-headless", action="store_false", dest="headless")
+    p = argparse.ArgumentParser(description="Shopee Video Counter (API)")
+    p.add_argument("--products", required=True, help="IDs dos produtos (shop_id/item_id)")
+    p.add_argument("--cookies", default="cookies.json", help="Caminho para cookies.json")
+    p.add_argument("--threshold", type=int, default=5, help="Limite para Oceano Azul")
     p.add_argument("--debug", action="store_true")
-    p.set_defaults(headless=True)
     args = p.parse_args()
     
     setup_logging(args.debug)
     ids = [x.strip() for x in args.products.split(",")]
-    results = asyncio.run(run(ids, args.cookies, 1, 1, args.threshold, args.headless))
     
+    log.info("Iniciando contagem via API para %d produtos...", len(ids))
+    results = asyncio.run(run(ids, args.cookies, args.threshold))
+    
+    print(f"\n{'ID':<25} {'Videos':<10} {'Status'}")
+    print("-" * 50)
     for r in results:
-        print(f"{r.product_id:<25} {r.video_count if r.video_count is not None else 'N/A':<10} {r.status}")
+        v_str = str(r.video_count) if r.video_count is not None else "N/A"
+        print(f"{r.product_id:<25} {v_str:<10} {r.status}")
 
 if __name__ == "__main__":
     main()

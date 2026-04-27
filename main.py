@@ -3,12 +3,34 @@ from flask import Flask, send_from_directory, request, jsonify
 from flask_cors import CORS
 import asyncio
 import importlib
+import subprocess
 
 # Importa o scraper dinamicamente para evitar problemas de loop de evento
 scraper = importlib.import_module("scraper")
 
 app = Flask(__name__, static_folder='dist')
 CORS(app)
+
+@app.route('/api/extract_mitm', methods=['GET'])
+def extract_mitm():
+    try:
+        import re
+        def extract_strings(filename, output_filename):
+            with open(filename, 'rb') as f:
+                data = f.read()
+            strings = re.findall(b'[a-zA-Z0-9./?=&_-]{5,}', data)
+            with open(output_filename, 'w') as out:
+                for s in strings:
+                    try:
+                        out.write(s.decode('utf-8') + '\n')
+                    except:
+                        pass
+        
+        extract_strings('.dyad/media/1f6dd4416d5ad9966f1399c2a2722d0e.mitm', 'strings1.txt')
+        extract_strings('.dyad/media/f306333995e49235958be36ecaae81d8.mitm', 'strings2.txt')
+        return jsonify({"status": "success"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 # Rota para servir o frontend React
 @app.route('/', defaults={'path': ''})
@@ -46,11 +68,8 @@ def scan_product():
         # Configurações básicas
         results = loop.run_until_complete(scraper.run(
             ids=[product_id],
-            cookies="cookies.json",
-            concurrency=1,
-            rps=1.0,
-            threshold=5,
-            headless=True
+            cookies_path="cookies.json",
+            threshold=5
         ))
         
         if results and len(results) > 0:

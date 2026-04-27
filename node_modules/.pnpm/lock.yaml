@@ -11,6 +11,9 @@ importers:
       clsx:
         specifier: ^2.1.0
         version: 2.1.1
+      httpx:
+        specifier: ^3.0.1
+        version: 3.0.1
       lucide-react:
         specifier: ^0.344.0
         version: 0.344.0(react@18.3.1)
@@ -464,6 +467,10 @@ packages:
   hasown@2.0.3:
     resolution: {integrity: sha512-ej4AhfhfL2Q2zpMmLo7U1Uv9+PyhIZpgQLGT1F9miIGmiCJIoCgSmczFdrc97mWT4kVY72KA+WnnhJ5pghSvSg==}
     engines: {node: '>= 0.4'}
+
+  httpx@3.0.1:
+    resolution: {integrity: sha512-ILTmufYaGAH2Def/wQ++6mz41xDghoRFd3b49uSkVMIRUKm2nHTvPPaVGtNN5hoTu9E3bJ8Jg+8TRkx+PiN6sg==}
+    engines: {node: '>= 12'}
 
   is-binary-path@2.1.0:
     resolution: {integrity: sha512-ZMERYes6pDydyuGidse7OsHxtbI7WVeUEozgR/g7rd0xUimYNlvZRE/K2MgZTjWy725IfelLeVcEM97mmtRGXw==}
@@ -1148,6 +1155,12 @@ snapshots:
   hasown@2.0.3:
     dependencies:
       function-bind: 1.1.2
+
+  httpx@3.0.1:
+    dependencies:
+      debug: 4.4.3
+    transitivePeerDependencies:
+      - supports-color
 
   is-binary-path@2.1.0:
     dependencies:

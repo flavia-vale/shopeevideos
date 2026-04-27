@@ -1,6 +1,6 @@
 """
-Diagnose — v2.3
-Busca exaustiva por abas e rolagem de página.
+Diagnose API — v3.0
+Valida a chamada de API interna da Shopee.
 """
 
 import argparse
@@ -8,106 +8,93 @@ import asyncio
 import json
 import os
 from pathlib import Path
-from datetime import datetime
+import httpx
 
-from playwright.async_api import async_playwright
+API_URL = "https://sv.shopee.com.br/api/v2/timeline/unify/common"
+APP_USER_AGENT = "iOS app iPhone Shopee appver=37235 language=pt-BR app_type=1 platform=native_ios os_ver=26.3.1 Cronet/102.0.5005.61"
 
+def load_cookies(path: str) -> dict:
+    if not os.path.exists(path): return {}
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+        if isinstance(data, dict) and "cookies" in data: data = data["cookies"]
+        return {c["name"]: c["value"] for c in data}
+    except: return {}
 
-SHOPEE_BASE = "https://shopee.com.br"
+async def diagnose_api(product_id: str, cookies_path: str):
+    if "/" in product_id:
+        shop_id, item_id = map(int, product_id.split("/", 1))
+    else:
+        print("Erro: Use o formato shop_id/item_id")
+        return
 
-def _normalize_cookie(c: dict) -> dict:
-    VALID_SAME_SITE = {"Strict", "Lax", "None"}
-    same_site = c.get("sameSite")
-    if same_site not in VALID_SAME_SITE:
-        same_site = "None"
-    normalized: dict = {
-        "name":     c["name"],
-        "value":    c["value"],
-        "domain":   c.get("domain", ""),
-        "path":     c.get("path", "/"),
-        "secure":   bool(c.get("secure", False)),
-        "httpOnly": bool(c.get("httpOnly", False)),
-        "sameSite": same_site,
-    }
-    expires = c.get("expires") or c.get("expirationDate")
-    if expires is not None:
-        normalized["expires"] = int(expires)
-    return normalized
-
-async def diagnose(product_id: str, cookies_path: str, headless: bool) -> None:
-    url = f"{SHOPEE_BASE}/product/{product_id}"
-    timestamp = datetime.now().strftime("%H%M%S")
+    cookies = load_cookies(cookies_path)
     
-    async with async_playwright() as pw:
-        print(f"\n[1] Iniciando navegador...")
-        browser = await pw.chromium.launch(headless=headless, args=["--disable-blink-features=AutomationControlled"])
-        context = await browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            viewport={"width": 1280, "height": 1000},
-            locale="pt-BR"
-        )
+    headers = {
+        "User-Agent": APP_USER_AGENT,
+        "Content-Type": "application/json",
+        "X-CSRFToken": cookies.get("csrftoken", ""),
+        "Referer": f"https://shopee.com.br/product/{shop_id}/{item_id}",
+    }
 
-        if os.path.exists(cookies_path):
-            try:
-                raw = json.loads(Path(cookies_path).read_text(encoding="utf-8"))
-                if isinstance(raw, dict) and "cookies" in raw: raw = raw["cookies"]
-                await context.add_cookies([_normalize_cookie(c) for c in raw])
-                print("[2] Cookies injetados.")
-            except: pass
+    payload = {
+        "limit": 10,
+        "page_context": json.dumps({
+            "item_id": item_id,
+            "shop_id": shop_id,
+            "offset": 0,
+            "template_tab_id": "5",
+            "order_type": 1
+        }),
+        "device_id": "204E33D7540D48258995F115C7930559",
+        "request_type": 0,
+        "lang": "pt-BR",
+        "page_no": 1,
+        "need_product_v2": True,
+        "product_v2_scene": "affiliate_video_common_timeline"
+    }
 
-        page = await context.new_page()
-        print(f"[3] Navegando para: {url}")
-        await page.goto(url, wait_until="networkidle")
-        await page.wait_for_timeout(5000)
-
-        # Tenta limpar a tela clicando no fundo
-        await page.mouse.click(10, 10)
-        
-        print("[4] Rolando a página para carregar seções ocultas...")
-        for i in range(3):
-            await page.evaluate("window.scrollBy(0, 600)")
-            await page.wait_for_timeout(1500)
-
-        # Tira print da parte do meio da página
-        screenshot_path = f"debug_scroll_{timestamp}.png"
-        await page.screenshot(path=screenshot_path)
-        print(f"[5] SCREENSHOT DA SEÇÃO MÉDIA: {screenshot_path}")
-
-        print("\n[6] Analisando elementos de texto (Abas em potencial):")
-        # Procura por textos que contenham palavras-chave
-        keywords = ["criador", "video", "aprender", "inspira", "ver"]
-        
-        elements = await page.query_selector_all("button, span, div[role='tab']")
-        found_count = 0
-        for el in elements:
-            try:
-                text = (await el.inner_text()).strip()
-                if text and len(text) < 50: # Ignora textos muito longos
-                    is_match = any(k in text.lower() for k in keywords)
-                    if is_match:
-                        print(f"    -> ENCONTRADO: '{text}'")
-                        found_count += 1
-            except: pass
-        
-        if found_count == 0:
-            print("    Nenhuma aba óbvia encontrada. Listando os primeiros 10 botões da página para debug:")
-            for el in elements[:10]:
-                try: print(f"       - {await el.inner_text()}")
-                except: pass
-
-        if not headless:
-            print("\nVerifique o navegador e feche para terminar.")
-            while browser.is_connected(): await asyncio.sleep(1)
-        else:
-            await browser.close()
+    print(f"\n[1] Testando API para o produto {shop_id}/{item_id}...")
+    
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            response = await client.post(API_URL, json=payload, headers=headers, cookies=cookies)
+            print(f"[2] Status da Resposta: {response.status_code}")
+            
+            if response.status_code == 200:
+                data = response.json()
+                print("[3] Resposta JSON recebida com sucesso.")
+                
+                # Analisa a estrutura
+                res_data = data.get("data", {})
+                feed_list = res_data.get("feed_list", [])
+                total_count = res_data.get("total_count", len(feed_list))
+                
+                print(f"\n--- RESULTADO ---")
+                print(f"Total de vídeos (total_count): {total_count}")
+                print(f"Vídeos na primeira página: {len(feed_list)}")
+                
+                if len(feed_list) > 0:
+                    print("\nExemplo de vídeo encontrado:")
+                    video = feed_list[0]
+                    print(f"  - ID: {video.get('id')}")
+                    print(f"  - Título: {video.get('title')}")
+                else:
+                    print("\nNenhum vídeo encontrado na lista.")
+                    if total_count == 0:
+                        print("Isso confirma que o produto não tem vídeos de criadores.")
+            else:
+                print(f"Erro: {response.text}")
+                
+        except Exception as e:
+            print(f"Erro na requisição: {e}")
 
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--product", required=True)
     p.add_argument("--cookies", default="cookies.json")
-    p.add_argument("--no-headless", action="store_true")
     args = p.parse_args()
-    asyncio.run(diagnose(args.product, args.cookies, not args.no_headless))
+    asyncio.run(diagnose_api(args.product, args.cookies))
 
 if __name__ == "__main__":
     main()
