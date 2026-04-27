@@ -1,31 +1,27 @@
 """
-Diagnose API — v3.1
-Valida a chamada de API interna da Shopee com tratamento de erro 418.
+Diagnose API — v3.2
+Tenta capturar o csrftoken e testa APIs alternativas (App vs Web).
 """
 
 import argparse
 import asyncio
 import json
 import os
+import re
 from pathlib import Path
 import httpx
 
-API_URL = "https://sv.shopee.com.br/api/v2/timeline/unify/common"
+API_URL_APP = "https://sv.shopee.com.br/api/v2/timeline/unify/common"
+API_URL_WEB = "https://shopee.com.br/api/v4/item/get" # API de detalhes do produto
 APP_USER_AGENT = "iOS app iPhone Shopee appver=37235 language=pt-BR app_type=1 platform=native_ios os_ver=26.3.1 Cronet/102.0.5005.61"
 
 def load_cookies(path: str) -> dict:
-    if not os.path.exists(path): 
-        print(f"Erro: Arquivo {path} não encontrado.")
-        return {}
+    if not os.path.exists(path): return {}
     try:
         data = json.loads(Path(path).read_text(encoding="utf-8"))
         if isinstance(data, dict) and "cookies" in data: data = data["cookies"]
-        cookie_dict = {c["name"]: c["value"] for c in data}
-        print(f"Cookies carregados: {list(cookie_dict.keys())}")
-        return cookie_dict
-    except Exception as e:
-        print(f"Erro ao ler cookies: {e}")
-        return {}
+        return {c["name"]: c["value"] for c in data}
+    except: return {}
 
 async def diagnose_api(product_id: str, cookies_path: str):
     if "/" in product_id:
@@ -35,61 +31,61 @@ async def diagnose_api(product_id: str, cookies_path: str):
         return
 
     cookies = load_cookies(cookies_path)
+    
+    # Tenta pegar o csrftoken se ele existir
     csrftoken = cookies.get("csrftoken", "")
     
-    if not csrftoken:
-        print("AVISO: 'csrftoken' não encontrado nos cookies. Isso pode causar erro 418.")
-
-    headers = {
-        "User-Agent": APP_USER_AGENT,
-        "Content-Type": "application/json",
-        "X-CSRFToken": csrftoken,
-        "Referer": f"https://shopee.com.br/product/{shop_id}/{item_id}",
-        "x-requested-from": "rn",
-    }
-
-    payload = {
-        "limit": 10,
-        "page_context": json.dumps({
-            "item_id": item_id,
-            "shop_id": shop_id,
-            "offset": 0,
-            "template_tab_id": "5",
-            "order_type": 1
-        }),
-        "device_id": "204E33D7540D48258995F115C7930559",
-        "request_type": 0,
-        "lang": "pt-BR",
-        "page_no": 1,
-        "need_product_v2": True,
-        "product_v2_scene": "affiliate_video_common_timeline"
-    }
-
-    print(f"\n[1] Testando API para o produto {shop_id}/{item_id}...")
-    
-    async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-        try:
-            response = await client.post(API_URL, json=payload, headers=headers, cookies=cookies)
-            print(f"[2] Status da Resposta: {response.status_code}")
-            
-            if response.status_code == 200:
-                data = response.json()
-                res_data = data.get("data", {})
-                total_count = res_data.get("total_count", 0)
-                print(f"\n--- SUCESSO! ---")
-                print(f"Total de vídeos: {total_count}")
-            elif response.status_code == 418:
-                print("\n--- BLOQUEIO DETECTADO (418) ---")
-                print("A Shopee bloqueou a requisição.")
-                print("Tente o seguinte:")
-                print("1. Abra o site da Shopee no seu navegador e faça um scroll na página de qualquer produto.")
-                print("2. Exporte os cookies novamente para o arquivo cookies.json.")
-                print("3. Verifique se o cookie 'csrftoken' está presente.")
+    async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
+        # PASSO 1: Tentar obter um csrftoken novo se estiver faltando
+        if not csrftoken:
+            print("[!] csrftoken ausente. Tentando obter um visitando a home...")
+            resp = await client.get("https://shopee.com.br", cookies=cookies)
+            csrftoken = resp.cookies.get("csrftoken", "")
+            if csrftoken:
+                print(f"[+] Token obtido com sucesso: {csrftoken[:10]}...")
+                cookies["csrftoken"] = csrftoken
             else:
-                print(f"Erro inesperado: {response.text}")
-                
+                print("[!] Não foi possível obter o csrftoken automaticamente.")
+
+        # PASSO 2: Testar API do App (a que conta vídeos)
+        print(f"\n[1] Testando API do APP (Contagem de Vídeos)...")
+        headers_app = {
+            "User-Agent": APP_USER_AGENT,
+            "Content-Type": "application/json",
+            "X-CSRFToken": csrftoken,
+            "Referer": f"https://shopee.com.br/product/{shop_id}/{item_id}",
+            "x-requested-from": "rn",
+        }
+        payload = {
+            "limit": 5,
+            "page_context": json.dumps({"item_id": item_id, "shop_id": shop_id, "template_tab_id": "5"}),
+            "request_type": 0,
+            "need_product_v2": True,
+            "product_v2_scene": "affiliate_video_common_timeline"
+        }
+
+        try:
+            res = await client.post(API_URL_APP, json=payload, headers=headers_app, cookies=cookies)
+            print(f"Status App API: {res.status_code}")
+            if res.status_code == 200:
+                total = res.json().get("data", {}).get("total_count", 0)
+                print(f"✅ SUCESSO! Vídeos encontrados: {total}")
+            elif res.status_code == 418:
+                print("❌ Bloqueio 418 (Anti-bot).")
         except Exception as e:
-            print(f"Erro na requisição: {e}")
+            print(f"Erro na API do App: {e}")
+
+        # PASSO 3: Testar API de Web (apenas para ver se a sessão está viva)
+        print(f"\n[2] Testando API de WEB (Sessão Geral)...")
+        try:
+            res_web = await client.get(f"{API_URL_WEB}?itemid={item_id}&shopid={shop_id}", cookies=cookies)
+            print(f"Status Web API: {res_web.status_code}")
+            if res_web.status_code == 200:
+                print("✅ Sua sessão (cookies) está ATIVA e funcionando para a Web.")
+            else:
+                print("❌ Seus cookies podem estar expirados ou inválidos.")
+        except Exception as e:
+            print(f"Erro na API de Web: {e}")
 
 def main():
     p = argparse.ArgumentParser()
