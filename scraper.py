@@ -46,7 +46,6 @@ log = logging.getLogger("shopee")
 # ── Configurações ────────────────────────────────────────────────────────────
 
 SHOPEE_BASE = "https://shopee.com.br"
-CHROMIUM_EXEC = "/opt/pw-browsers/chromium-1194/chrome-linux/chrome" if os.path.exists("/opt/pw-browsers") else None
 
 CREATORS_TAB_TEXTS = [
     "aprender com criadores", 
@@ -254,7 +253,7 @@ async def process_product(page: Page, pid: str, threshold: int) -> ProductResult
 async def run(ids: list[str], cookies: str, concurrency: int, rps: float, threshold: int, headless: bool) -> list[ProductResult]:
     async with async_playwright() as pw:
         launch_args = ["--disable-blink-features=AutomationControlled", "--no-sandbox"]
-        browser = await pw.chromium.launch(headless=headless, executable_path=CHROMIUM_EXEC, args=launch_args)
+        browser = await pw.chromium.launch(headless=headless, args=launch_args)
         context = await browser.new_context(user_agent=MOBILE_UA, viewport={"width": 390, "height": 844}, ignore_https_errors=True, locale="pt-BR")
         await context.add_init_script("Object.defineProperty(navigator, 'webdriver', { get: () => false });")
         await inject_cookies(context, cookies)

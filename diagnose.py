@@ -16,11 +16,6 @@ from playwright.async_api import async_playwright
 
 
 SHOPEE_BASE = "https://shopee.com.br"
-# Tenta o caminho do Codespace, se não existir, deixa o Playwright decidir
-CHROMIUM_EXEC = "/opt/pw-browsers/chromium-1194/chrome-linux/chrome"
-if not os.path.exists(CHROMIUM_EXEC):
-    CHROMIUM_EXEC = None
-
 
 def _normalize_cookie(c: dict) -> dict:
     VALID_SAME_SITE = {"Strict", "Lax", "None"}
@@ -90,8 +85,6 @@ async def diagnose(product_id: str, cookies_path: str, headless: bool) -> None:
             "headless": headless,
             "args": ["--disable-blink-features=AutomationControlled", "--no-sandbox"]
         }
-        if CHROMIUM_EXEC:
-            launch_kwargs["executable_path"] = CHROMIUM_EXEC
             
         browser = await pw.chromium.launch(**launch_kwargs)
         context = await browser.new_context(
