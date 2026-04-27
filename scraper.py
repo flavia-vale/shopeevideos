@@ -1,6 +1,6 @@
 """
-Shopee Video Counter - v1.2
-Agora com suporte para fechar modais de idioma e melhor detecção.
+Shopee Video Counter - v1.3
+Correção para modais persistentes e cliques interceptados.
 """
 
 import argparse
@@ -117,12 +117,12 @@ def _normalize_cookie(c: dict) -> dict:
 async def handle_modals(page: Page):
     """Fecha modais que bloqueiam a tela, como seleção de idioma."""
     try:
-        # Procura pelo botão de idioma "Português (BR)"
         lang_button = page.get_by_role("button", name="Português (BR)").or_(page.get_by_text("Português (BR)")).first
         if await lang_button.is_visible(timeout=3000):
-            log.info("Modal de idioma detectado. Clicando em 'Português (BR)'...")
-            await lang_button.click()
-            await asyncio.sleep(1)
+            log.info("Modal de idioma detectado. Forçando clique em 'Português (BR)'...")
+            # force=True é essencial aqui para ignorar o overlay GIv4S4
+            await lang_button.click(force=True)
+            await asyncio.sleep(2)
     except Exception:
         pass
 
@@ -140,9 +140,8 @@ async def navigate(page: Page, product_id: str) -> str | None:
     try:
         log.info("Navegando para %s", url)
         await page.goto(url, wait_until="domcontentloaded", timeout=45_000)
-        await asyncio.sleep(3)
+        await asyncio.sleep(4)
         
-        # Tenta fechar modais antes de prosseguir
         await handle_modals(page)
         
         if any(ind in page.url for ind in LOGIN_INDICATORS):
@@ -153,7 +152,6 @@ async def navigate(page: Page, product_id: str) -> str | None:
 
 async def find_and_click_tab(page: Page) -> bool:
     try:
-        # Espera as abas aparecerem
         await page.wait_for_selector(NAV_TAB_SELECTOR, timeout=10_000)
         tabs = await page.query_selector_all(NAV_TAB_SELECTOR)
         
@@ -162,7 +160,8 @@ async def find_and_click_tab(page: Page) -> bool:
             if any(t in text for t in CREATORS_TAB_TEXTS):
                 log.info("Aba encontrada: '%s'. Clicando...", text)
                 await tab.scroll_into_view_if_needed()
-                await tab.click()
+                # Também usamos force=True aqui por segurança
+                await tab.click(force=True)
                 await asyncio.sleep(2)
                 return True
     except Exception:
@@ -202,9 +201,8 @@ async def process_product(page: Page, pid: str, threshold: int) -> ProductResult
     if err: return ProductResult(pid, None, "error", err, elapsed_s=round(time.monotonic()-t0, 2))
 
     if not await find_and_click_tab(page):
-        # Tenta um scroll rápido caso a aba esteja escondida
-        await page.evaluate("window.scrollBy(0, 500)")
-        await asyncio.sleep(1)
+        await page.evaluate("window.scrollBy(0, 600)")
+        await asyncio.sleep(2)
         if not await find_and_click_tab(page):
             return ProductResult(pid, None, "no_tab", "aba não encontrada", elapsed_s=round(time.monotonic()-t0, 2))
 

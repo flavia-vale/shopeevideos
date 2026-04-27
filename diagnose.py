@@ -1,6 +1,6 @@
 """
-Diagnose — v2.1
-Agora com fechamento automático de modal de idioma.
+Diagnose — v2.2
+Correção para clique interceptado por overlay.
 """
 
 import argparse
@@ -59,17 +59,21 @@ async def diagnose(product_id: str, cookies_path: str, headless: bool) -> None:
         page = await context.new_page()
         print(f"[3] Navegando para: {url}")
         await page.goto(url, wait_until="domcontentloaded")
-        await page.wait_for_timeout(3000)
+        await page.wait_for_timeout(5000)
 
-        # Tenta fechar o modal de idioma
+        # Tenta fechar o modal de idioma com clique forçado
         print("[4] Verificando modais de bloqueio...")
-        lang_button = page.get_by_role("button", name="Português (BR)").or_(page.get_by_text("Português (BR)")).first
-        if await lang_button.is_visible(timeout=3000):
-            print("    -> Modal de idioma detectado! Clicando para fechar...")
-            await lang_button.click()
-            await page.wait_for_timeout(2000)
-        else:
-            print("    -> Nenhum modal de idioma visível.")
+        try:
+            lang_button = page.get_by_role("button", name="Português (BR)").or_(page.get_by_text("Português (BR)")).first
+            if await lang_button.is_visible(timeout=5000):
+                print("    -> Modal de idioma detectado! Forçando clique...")
+                # force=True ignora se houver algo na frente
+                await lang_button.click(force=True)
+                await page.wait_for_timeout(3000)
+            else:
+                print("    -> Nenhum modal de idioma visível.")
+        except Exception as e:
+            print(f"    -> Erro ao tentar fechar modal: {e}")
 
         # Tira novo print após tentar fechar o modal
         await page.screenshot(path=screenshot_path)
@@ -77,11 +81,21 @@ async def diagnose(product_id: str, cookies_path: str, headless: bool) -> None:
 
         # Procura a aba
         print("\n[6] Procurando abas de vídeos:")
-        tabs = await page.query_selector_all("button, span, div[role='tab']")
-        for t in tabs:
-            txt = (await t.inner_text()).strip()
-            if txt and any(x in txt.lower() for x in ["criador", "video", "aprender"]):
-                print(f"    -> ENCONTRADA: '{txt}'")
+        # Tenta vários seletores para as abas
+        tab_selectors = ["[role='tab']", ".shopee-tabs__tab", "._2u_8_X", "button", "span"]
+        found_any = False
+        for sel in tab_selectors:
+            tabs = await page.query_selector_all(sel)
+            for t in tabs:
+                try:
+                    txt = (await t.inner_text()).strip()
+                    if txt and any(x in txt.lower() for x in ["criador", "video", "aprender"]):
+                        print(f"    -> ENCONTRADA ({sel}): '{txt}'")
+                        found_any = True
+                except: pass
+        
+        if not found_any:
+            print("    Nenhuma aba encontrada. Verifique a screenshot para ver se o modal sumiu.")
 
         if not headless:
             print("\nVerifique o navegador e feche para terminar.")
