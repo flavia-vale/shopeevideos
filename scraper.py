@@ -273,7 +273,7 @@ async def run(ids: list[str], cookies: str, concurrency: int, rps: float, thresh
 def main():
     p = argparse.ArgumentParser(description="Shopee Video Counter")
     p.add_argument("--products", required=True, help="IDs dos produtos separados por vírgula")
-    p.add_argument("--cookies", required=True, help="Caminho para o arquivo cookies.json")
+    p.add_argument("--cookies", default="cookies.json", help="Caminho para o arquivo de cookies (padrao: cookies.json)")
     p.add_argument("--threshold", type=int, default=5, help="Limite para Oceano Azul")
     p.add_argument("--no-headless", action="store_false", dest="headless", help="Desativa o modo headless")
     p.add_argument("--debug", action="store_true", help="Ativa logs detalhados")

@@ -2,8 +2,8 @@
 Cookie Helper — valida e inspeciona cookies de sessão da Shopee.
 
 Uso:
-    python cookie_helper.py --cookies cookies.json
-    python cookie_helper.py --cookies cookies.json --export-from-browser
+    python cookie_helper.py
+    python cookie_helper.py --export-from-browser
 """
 
 import argparse
@@ -84,7 +84,7 @@ Renove sempre que o scraper retornar status "expired".
 
 def main() -> None:
     p = argparse.ArgumentParser(description="Valida cookies de sessao da Shopee")
-    p.add_argument("--cookies", required=True, help="Caminho para cookies.json")
+    p.add_argument("--cookies", default="cookies.json", help="Caminho para o arquivo de cookies (padrao: cookies.json)")
     p.add_argument("--export-from-browser", action="store_true",
                    help="Exibir instrucoes de exportacao")
     args = p.parse_args()
@@ -97,10 +97,10 @@ def main() -> None:
         cookies = load(args.cookies)
     except FileNotFoundError:
         print(f"Arquivo nao encontrado: {args.cookies}")
-        print("Copie cookies.json.example para cookies.json e preencha com seus dados.")
+        print("Certifique-se de que o arquivo cookies.json existe na raiz do projeto.")
         sys.exit(1)
     except Exception as exc:
-        print(f"Erro ao ler cookies.json: {exc}")
+        print(f"Erro ao ler {args.cookies}: {exc}")
         sys.exit(1)
 
     validate(cookies)

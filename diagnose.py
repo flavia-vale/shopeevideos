@@ -2,8 +2,8 @@
 Diagnose — valida seletores CSS e Shadow DOM em uma página de produto real.
 
 Uso:
-    python diagnose.py --product shop_id/item_id --cookies cookies.json
-    python diagnose.py --product 1234567890 --cookies cookies.json --no-headless
+    python diagnose.py --product shop_id/item_id
+    python diagnose.py --product 1234567890 --no-headless
 """
 
 import argparse
@@ -98,6 +98,11 @@ async def diagnose(product_id: str, cookies_path: str, headless: bool) -> None:
             ignore_https_errors=True,
         )
 
+        if not os.path.exists(cookies_path):
+            print(f"Erro: Arquivo {cookies_path} nao encontrado.")
+            await browser.close()
+            return
+
         raw = json.loads(Path(cookies_path).read_text(encoding="utf-8"))
         if isinstance(raw, dict) and "cookies" in raw:
             raw = raw["cookies"]
@@ -182,7 +187,7 @@ async def diagnose(product_id: str, cookies_path: str, headless: bool) -> None:
 def main() -> None:
     p = argparse.ArgumentParser(description="Valida seletores em página de produto Shopee")
     p.add_argument("--product", required=True, help="ID ou shop_id/item_id do produto")
-    p.add_argument("--cookies", required=True, help="Caminho para cookies.json")
+    p.add_argument("--cookies", default="cookies.json", help="Caminho para o arquivo de cookies (padrao: cookies.json)")
     p.add_argument("--no-headless", action="store_true", help="Abrir browser visível")
     args = p.parse_args()
 
