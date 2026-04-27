@@ -56,7 +56,7 @@ SHADOW_PROBE_JS = r"""
         if (!el.shadowRoot) return;
         const host = el.tagName + (el.id ? '#' + el.id : '') +
                      (el.className && typeof el.className === 'string'
-                         ? '.' + el.className.trim().split(/\s+/).join('.')
+                         ? '.' + el.className.trim().split(/\\s+/).join('.')
                          : '');
         const children = el.shadowRoot.querySelectorAll('*').length;
         results.push({ host, children });
