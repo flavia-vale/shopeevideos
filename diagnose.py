@@ -1,6 +1,6 @@
 """
-Diagnose — v2.2
-Correção para clique interceptado por overlay.
+Diagnose — v2.3
+Busca exaustiva por abas e rolagem de página.
 """
 
 import argparse
@@ -37,14 +37,13 @@ def _normalize_cookie(c: dict) -> dict:
 async def diagnose(product_id: str, cookies_path: str, headless: bool) -> None:
     url = f"{SHOPEE_BASE}/product/{product_id}"
     timestamp = datetime.now().strftime("%H%M%S")
-    screenshot_path = f"debug_shopee_{timestamp}.png"
-
+    
     async with async_playwright() as pw:
         print(f"\n[1] Iniciando navegador...")
         browser = await pw.chromium.launch(headless=headless, args=["--disable-blink-features=AutomationControlled"])
         context = await browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            viewport={"width": 1280, "height": 900},
+            viewport={"width": 1280, "height": 1000},
             locale="pt-BR"
         )
 
@@ -58,44 +57,43 @@ async def diagnose(product_id: str, cookies_path: str, headless: bool) -> None:
 
         page = await context.new_page()
         print(f"[3] Navegando para: {url}")
-        await page.goto(url, wait_until="domcontentloaded")
+        await page.goto(url, wait_until="networkidle")
         await page.wait_for_timeout(5000)
 
-        # Tenta fechar o modal de idioma com clique forçado
-        print("[4] Verificando modais de bloqueio...")
-        try:
-            lang_button = page.get_by_role("button", name="Português (BR)").or_(page.get_by_text("Português (BR)")).first
-            if await lang_button.is_visible(timeout=5000):
-                print("    -> Modal de idioma detectado! Forçando clique...")
-                # force=True ignora se houver algo na frente
-                await lang_button.click(force=True)
-                await page.wait_for_timeout(3000)
-            else:
-                print("    -> Nenhum modal de idioma visível.")
-        except Exception as e:
-            print(f"    -> Erro ao tentar fechar modal: {e}")
-
-        # Tira novo print após tentar fechar o modal
-        await page.screenshot(path=screenshot_path)
-        print(f"[5] SCREENSHOT ATUALIZADA: {screenshot_path}")
-
-        # Procura a aba
-        print("\n[6] Procurando abas de vídeos:")
-        # Tenta vários seletores para as abas
-        tab_selectors = ["[role='tab']", ".shopee-tabs__tab", "._2u_8_X", "button", "span"]
-        found_any = False
-        for sel in tab_selectors:
-            tabs = await page.query_selector_all(sel)
-            for t in tabs:
-                try:
-                    txt = (await t.inner_text()).strip()
-                    if txt and any(x in txt.lower() for x in ["criador", "video", "aprender"]):
-                        print(f"    -> ENCONTRADA ({sel}): '{txt}'")
-                        found_any = True
-                except: pass
+        # Tenta limpar a tela clicando no fundo
+        await page.mouse.click(10, 10)
         
-        if not found_any:
-            print("    Nenhuma aba encontrada. Verifique a screenshot para ver se o modal sumiu.")
+        print("[4] Rolando a página para carregar seções ocultas...")
+        for i in range(3):
+            await page.evaluate("window.scrollBy(0, 600)")
+            await page.wait_for_timeout(1500)
+
+        # Tira print da parte do meio da página
+        screenshot_path = f"debug_scroll_{timestamp}.png"
+        await page.screenshot(path=screenshot_path)
+        print(f"[5] SCREENSHOT DA SEÇÃO MÉDIA: {screenshot_path}")
+
+        print("\n[6] Analisando elementos de texto (Abas em potencial):")
+        # Procura por textos que contenham palavras-chave
+        keywords = ["criador", "video", "aprender", "inspira", "ver"]
+        
+        elements = await page.query_selector_all("button, span, div[role='tab']")
+        found_count = 0
+        for el in elements:
+            try:
+                text = (await el.inner_text()).strip()
+                if text and len(text) < 50: # Ignora textos muito longos
+                    is_match = any(k in text.lower() for k in keywords)
+                    if is_match:
+                        print(f"    -> ENCONTRADO: '{text}'")
+                        found_count += 1
+            except: pass
+        
+        if found_count == 0:
+            print("    Nenhuma aba óbvia encontrada. Listando os primeiros 10 botões da página para debug:")
+            for el in elements[:10]:
+                try: print(f"       - {await el.inner_text()}")
+                except: pass
 
         if not headless:
             print("\nVerifique o navegador e feche para terminar.")
