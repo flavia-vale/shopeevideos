@@ -1,112 +1,130 @@
-# Shopee Video Counter
+# Shopee Video — caçador de oportunidades
 
-Identifica **Oceanos Azuis** contando vídeos na aba "Aprender com criadores" de produtos Shopee.
+Acha produto com **comissão boa** e **poucos vídeos de afiliado** publicados.
 
-## Arquitetura
+O caminho antigo (copiar cookie e chamar a API interna) batia em `403 is_login:
+false` e não tinha conserto. A abordagem atual puxa cada dado de onde ele
+realmente está disponível — o raciocínio completo está em
+[ESTRATEGIA.md](ESTRATEGIA.md).
 
 ```
-cookie_helper.py   — valida/inspeciona cookies de sessão
-diagnose.py        — sonda seletores CSS/Shadow DOM em tempo real
-scraper.py         — scraper principal com retry, logging e saída CSV/JSON
+shopeeops/affiliate_api.py   comissão + vendas   Open API oficial, assinada
+shopeeops/sv_public.py       concorrência        SSR público, sem login
+shopeeops/video_count.py     nº de vídeos        Chrome logado, fetch na página
+shopeeops/scoring.py         ranking             ganho × demanda ÷ disputa
+oportunidades.py             orquestra os três
 ```
 
-## Setup
+## Instalação
 
 ```bash
 pip install -r requirements.txt
-playwright install chromium
-cp cookies.json.example cookies.json
+python -m playwright install chromium
 ```
 
-## 1. Exportar Cookies
+Credenciais da Open API (painel de afiliados > Open API), num `.env`:
+
+```
+SHOPEE_APP_ID=...
+SHOPEE_APP_SECRET=...
+```
+
+Login do navegador — manual, uma vez só:
 
 ```bash
-python cookie_helper.py --cookies cookies.json --export-from-browser
+python -m shopeeops.video_count login
 ```
 
-Preencha `cookies.json` com seus valores reais de `SPC_U`, `SPC_EC`, `SPC_SI`, `SPC_F`.
-Valide antes de rodar o scraper:
+Abre um Chrome visível. Entre na Shopee (QR code pelo app é o mais rápido),
+abra um vídeo em sv.shopee.com.br para confirmar, volte ao terminal e aperte
+ENTER. A sessão fica salva em `~/.shopeeops/chrome-profile`.
+
+## Uso
+
+### Ranking de oportunidades
 
 ```bash
-python cookie_helper.py --cookies cookies.json
+# varre o catálogo de maior comissão e conta os vídeos dos melhores
+python oportunidades.py --limit 60
+
+# nicho específico
+python oportunidades.py --keyword "organizador de cozinha" --limit 40
+
+# só comissão e demanda, sem abrir navegador — bem mais rápido
+python oportunidades.py --keyword fone --sem-contagem
+
+# salva para abrir no Excel
+python oportunidades.py --limit 100 --csv oportunidades.csv
 ```
 
-## 2. Diagnosticar Seletores (opcional, mas recomendado)
+Saída:
 
-Execute em um produto de referência para confirmar que os seletores CSS estão ativos:
+```
+  #   SCORE   COMIS    R$/VD     VEND    VÍD  PRODUTO
+  1   100.0   20.0%    12.00      500      0  Suporte Articulado para Monitor
+  2    41.2   15.0%     8.40      890      3  Kit Organizador de Gavetas 6 pçs
+  3     0.6   20.0%    12.00      500    180  Fone Bluetooth TWS i12
 
-```bash
-python diagnose.py --product shop_id/item_id --cookies cookies.json
+Detalhe dos melhores:
+
+  [100.0] Suporte Articulado para Monitor
+      oceano azul — comissão de 20% | R$ 12.00 por venda | 500 vendas | nenhum vídeo publicado
+      1234567/89012345  https://s.shopee.com.br/...
 ```
 
-A saída mostra:
-- Quais seletores encontram elementos (`<-- ATIVO`)
-- Se há Shadow DOM e quantos filhos
-- Textos das abas (`<-- CRIADORES`)
-- Re-contagem pós-scroll
+Parâmetros que mais importam:
 
-Se todos os seletores retornarem `0`, atualize `VIDEO_ITEM_SELECTORS` em `scraper.py`
-com o seletor identificado no diagnóstico.
-
-## 3. Rodar o Scraper
-
-```bash
-# Produtos avulsos (IDs separados por vírgula)
-python scraper.py --products shop_id/item_id,shop_id/item_id2 --cookies cookies.json
-
-# A partir de arquivo (um ID por linha)
-python scraper.py --products-file minha_lista.txt --cookies cookies.json
-
-# Saída CSV
-python scraper.py --products-file ids.txt --cookies cookies.json --output csv
-
-# Saída JSON em arquivo
-python scraper.py --products-file ids.txt --cookies cookies.json --output json --output-file resultado.json
-
-# Controle fino
-python scraper.py \
-  --products-file ids.txt \
-  --cookies cookies.json \
-  --concurrency 2 \
-  --rps 0.5 \
-  --threshold 3 \
-  --screenshot-on-error \
-  --debug
-```
-
-### Parâmetros
-
-| Parâmetro | Padrão | Descrição |
+| flag | padrão | o que faz |
 |---|---|---|
-| `--concurrency` | 3 | Abas paralelas |
-| `--rps` | 1.0 | Requisições por segundo |
-| `--threshold` | 5 | Videos < N = Oceano Azul |
-| `--screenshot-on-error` | off | Salva PNG de páginas com erro |
-| `--no-headless` | off | Abre browser visível (debug) |
-| `--debug` | off | Logging verboso |
+| `--limit` | 50 | quantas ofertas puxar da Open API |
+| `--min-comissao` | 8.0 | descarta comissão abaixo disso (%) |
+| `--min-vendas` | 20 | descarta produto sem demanda comprovada |
+| `--max-contagens` | 40 | teto de produtos para contar vídeo (passo caro) |
+| `--sem-contagem` | off | pula o navegador |
+| `--list-type` | 1 | 0=recomendados 1=maior comissão 2=melhor performance |
+| `--delay` | 2.0 | segundos entre contagens |
 
-## Saída (tabela)
+### Contar vídeos de produtos específicos
 
-```
-ID do Produto                Videos  Status                Detalhe
----------------------------------------------------------------------------
-123456/789012                    2  Oceano Azul           [data-sqe='video-item']
-654321/987654                   18  Competido             [data-sqe='video-item']
-111111/222222                  N/A  Sem aba criadores     aba 'Aprender com criadores' nao encontrada
+```bash
+python -m shopeeops.video_count count --products 862915940/18399230627
+python -m shopeeops.video_count count --products-file lista.txt --json
 ```
 
-## Status possíveis
+Aceita `shop_id/item_id`, URL de produto ou `i.123.456`.
 
-| Status | Significado |
+| status | significado |
 |---|---|
-| `blue_ocean` | Videos < threshold — baixa competição |
-| `competed` | Videos >= threshold — mercado saturado |
-| `no_tab` | Produto sem aba de criadores (categoria sem suporte) |
-| `expired` | Cookies expirados — renove `cookies.json` |
-| `error` | Falha de rede, timeout ou seletor não encontrado |
+| `ok` / `no_videos` | contagem obtida |
+| `not_logged_in` | rode `python -m shopeeops.video_count login` |
+| `blocked` | 418/429 — aumente `--delay` |
+| `error` | falha de rede ou ID inválido |
 
-## Logs e Depuração
+### Espiar vídeos de concorrentes (sem login)
 
-- `scraper.log` — log completo de cada execução
-- `error_<id>_<ts>.png` — screenshots de falhas (com `--screenshot-on-error`)
-- Use `--debug` para ver seletores tentados e contagens intermediárias
+Dá o produto anunciado, views, likes e vendas de qualquer vídeo público:
+
+```bash
+python -m shopeeops.sv_public "https://sv.shopee.com.br/web/@alguem/video/POSTID"
+python -m shopeeops.sv_public --file videos.txt --json corpus.json
+```
+
+Aceita URL completa, link `/share-video/...` ou só o `postId`. Junte as URLs
+dos criadores que você acompanha e o comando monta o índice
+produto → nº de vídeos, criadores, views medianas — útil para responder
+"esse produto engaja?" antes de gastar tempo gravando.
+
+## Como ler o resultado
+
+- **`oceano azul` com vendas boas** — é o alvo.
+- **`oceano azul (sem demanda comprovada)`** — cuidado. Zero vídeo e quase
+  nenhuma venda costuma ser produto ruim, não oportunidade descoberta.
+- **`saturado`** — mesmo com comissão ótima, seu vídeo vai competir com dezenas.
+- **`?` na coluna VÍD** — o produto passou do teto `--max-contagens` ou a
+  contagem falhou; ele foi ranqueado assumindo 5 vídeos.
+
+## Legado
+
+`scraper.py`, `diagnose.py` e `cookie_helper.py` são da investigação anterior.
+Continuam aqui como histórico e vão continuar dando 403 — o problema nunca foi
+a implementação deles. Veja [ESTRATEGIA.md](ESTRATEGIA.md).

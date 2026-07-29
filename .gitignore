@@ -1,5 +1,9 @@
+.env
 cookies.json
 __pycache__/
 *.pyc
-.env
 .dyad/
+chrome-profile/
+oportunidades.csv
+corpus.json
+scraper.log
