@@ -1,0 +1,99 @@
+name: Buscar oportunidades
+
+# Roda na nuvem do GitHub — não precisa instalar nada na sua máquina.
+#
+# Antes da primeira vez, cadastre as credenciais da Open API em
+#   Settings > Secrets and variables > Actions > New repository secret
+# com os nomes SHOPEE_APP_ID e SHOPEE_APP_SECRET.
+#
+# Depois: aba Actions > "Buscar oportunidades" > Run workflow.
+# No fim da execução, baixe o artefato "oportunidades".
+
+on:
+  workflow_dispatch:
+    inputs:
+      keyword:
+        description: "Nicho a pesquisar (vazio = catálogo de maior comissão)"
+        required: false
+        default: ""
+      limit:
+        description: "Quantas ofertas puxar"
+        required: false
+        default: "100"
+      min_comissao:
+        description: "Comissão mínima, em %"
+        required: false
+        default: "8"
+      min_vendas:
+        description: "Vendas mínimas"
+        required: false
+        default: "20"
+      contagens:
+        description: "CSV de contagem de vídeos já no repositório (opcional)"
+        required: false
+        default: ""
+
+jobs:
+  buscar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # o passo do navegador não roda aqui, então nada de playwright
+      - name: Instalar dependências
+        run: pip install "httpx[http2]==0.28.1" python-dotenv==1.0.1
+
+      - name: Buscar e ranquear
+        env:
+          SHOPEE_APP_ID: ${{ secrets.SHOPEE_APP_ID }}
+          SHOPEE_APP_SECRET: ${{ secrets.SHOPEE_APP_SECRET }}
+        run: |
+          if [ -z "$SHOPEE_APP_ID" ] || [ -z "$SHOPEE_APP_SECRET" ]; then
+            echo "::error::Cadastre os secrets SHOPEE_APP_ID e SHOPEE_APP_SECRET em Settings > Secrets and variables > Actions"
+            exit 1
+          fi
+
+          args=(
+            --limit "${{ inputs.limit }}"
+            --min-comissao "${{ inputs.min_comissao }}"
+            --min-vendas "${{ inputs.min_vendas }}"
+            --csv oportunidades.csv
+            --json oportunidades.json
+            --lista-produtos produtos.txt
+          )
+          [ -n "${{ inputs.keyword }}" ] && args+=(--keyword "${{ inputs.keyword }}")
+
+          # com contagem de vídeos junta tudo; sem ela, ranqueia por comissão e demanda
+          if [ -n "${{ inputs.contagens }}" ]; then
+            args+=(--contagens "${{ inputs.contagens }}")
+          else
+            args+=(--sem-contagem)
+          fi
+
+          python oportunidades.py "${args[@]}" | tee resultado.txt
+
+      - name: Resumo
+        if: always()
+        run: |
+          {
+            echo '## Oportunidades'
+            echo '```'
+            head -40 resultado.txt 2>/dev/null || echo "(sem saída)"
+            echo '```'
+            echo 'Baixe o artefato **oportunidades** abaixo para o CSV completo.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: oportunidades
+          path: |
+            oportunidades.csv
+            oportunidades.json
+            produtos.txt
+            resultado.txt
+          if-no-files-found: warn

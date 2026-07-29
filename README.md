@@ -15,6 +15,10 @@ shopeeops/scoring.py         ranking             ganho × demanda ÷ disputa
 oportunidades.py             orquestra os três
 ```
 
+> **Não pode instalar nada na sua máquina?** Veja
+> **[SEM_INSTALAR.md](SEM_INSTALAR.md)** — script de console do navegador
+> (conta os vídeos) + GitHub Actions (comissão e ranking). Zero instalação.
+
 ## Instalação
 
 ```bash

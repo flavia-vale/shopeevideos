@@ -82,6 +82,27 @@ def collect_offers(args: argparse.Namespace) -> list:
     return kept
 
 
+def load_counts_csv(path: Path) -> dict:
+    """Lê o CSV gerado por console/contar_videos.js.
+
+    Esse é o caminho para quem não pode instalar nada: o navegador conta e
+    baixa o CSV, e aqui a gente só junta com a comissão.
+    """
+    counts: dict[str, dict] = {}
+    with path.open(encoding="utf-8-sig", newline="") as fh:
+        for row in csv.DictReader(fh):
+            key = (row.get("chave") or row.get("product_key") or "").strip()
+            if not key:
+                continue
+            raw = (row.get("videos") or "").strip()
+            counts[key] = {
+                "videos": int(raw) if raw.isdigit() else None,
+                "creators": int((row.get("criadores") or "0").strip() or 0),
+            }
+    log.info("contagens carregadas de %s: %d produtos", path, len(counts))
+    return counts
+
+
 def count_videos(offers: list, args: argparse.Namespace) -> dict:
     from shopeeops.video_count import VideoCounter
 
@@ -145,6 +166,10 @@ def main(argv: list[str] | None = None) -> int:
                    help="teto de produtos para contar vídeo (padrão 40)")
     p.add_argument("--sem-contagem", action="store_true",
                    help="pula o navegador; ranqueia só por comissão e demanda")
+    p.add_argument("--contagens", type=Path,
+                   help="CSV vindo de console/contar_videos.js, em vez de abrir navegador")
+    p.add_argument("--lista-produtos", type=Path,
+                   help="salva os candidatos num .txt pronto para colar no script do console")
     p.add_argument("--delay", type=float, default=2.0, help="segundos entre contagens")
     p.add_argument("--no-headless", action="store_true", help="mostra o navegador")
     p.add_argument("--profile", type=Path, default=None, help="perfil do Chrome")
@@ -174,7 +199,19 @@ def main(argv: list[str] | None = None) -> int:
         log.warning("nenhum candidato passou no filtro — afrouxe --min-comissao / --min-vendas")
         return 1
 
-    counts = {} if args.sem_contagem else count_videos(offers, args)
+    if args.lista_produtos:
+        args.lista_produtos.write_text(
+            "\n".join(o.product_key for o in offers) + "\n", encoding="utf-8"
+        )
+        log.info("lista de candidatos salva em %s", args.lista_produtos)
+
+    if args.contagens:
+        counts = load_counts_csv(args.contagens)
+    elif args.sem_contagem:
+        counts = {}
+    else:
+        counts = count_videos(offers, args)
+
     ops = scoring.build(offers, counts)
 
     print_table(ops, args.top)
