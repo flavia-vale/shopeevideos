@@ -202,8 +202,11 @@ def main() -> int:
             if p.get("shopId") and p.get("itemId")
         ]
         Path(args.output).write_text("\n".join(lines) + "\n", encoding="utf-8")
+        # Sugere o mesmo interpretador que rodou este script: no Windows,
+        # "python" e "python3" costumam ser instalações diferentes.
+        python = Path(sys.executable).stem
         print(f"\nLista gravada em {args.output}. Próximo passo:")
-        print(f"  python3 affiliate_scan.py --products-file {args.output}")
+        print(f"  {python} affiliate_scan.py --products-file {args.output}")
 
     return 0
 

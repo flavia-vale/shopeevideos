@@ -326,6 +326,17 @@ async def run(
     endpoint = load_endpoint()
     results: list[ProductStats] = []
 
+    if not cookies:
+        log.warning(
+            "Sem cookies de sessão: a Shopee vai recusar todas as chamadas. "
+            "Exporte a sessão do navegador para %s.",
+            cookies_path,
+        )
+
+    # Sessão inválida derruba tudo igual, então não faz sentido gastar minutos
+    # varrendo uma lista longa para colecionar o mesmo 403.
+    consecutive_auth_failures = 0
+
     async with httpx.AsyncClient(
         timeout=30.0, follow_redirects=True, http2=http2_available()
     ) as client:
@@ -336,6 +347,19 @@ async def run(
             results.append(stats)
             if on_result:
                 on_result(stats)
+
+            consecutive_auth_failures = (
+                consecutive_auth_failures + 1 if stats.status == "expired" else 0
+            )
+            restantes = len(entries) - i - 1
+            if consecutive_auth_failures >= 3 and restantes:
+                log.error(
+                    "Três falhas de sessão seguidas — parando e deixando %d produtos de fora. "
+                    "Renove os cookies e rode de novo.",
+                    restantes,
+                )
+                break
+
             if i < len(entries) - 1:
                 await asyncio.sleep(delay)
 

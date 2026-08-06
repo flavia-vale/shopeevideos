@@ -21,8 +21,10 @@ npm install && npm run build
 python main.py                   # -> http://localhost:10000
 ```
 
-No Windows use `python` no lugar de `python3`. Se o `pip` não for encontrado,
-chame como módulo: `python -m pip install -r requirements.txt`.
+Os comandos usam `python`. Se na sua máquina o Python for `python3`, troque —
+mas use **sempre o mesmo**: no Windows `python` e `python3` costumam ser
+instalações diferentes, e as dependências ficam só em uma delas. Se o `pip` não
+for encontrado, chame como módulo: `python -m pip install -r requirements.txt`.
 
 O `requirements.txt` cobre só o painel. A abordagem antiga (contagem de vídeos)
 precisa do Playwright, que está em `requirements-scraper.txt`.
@@ -34,7 +36,7 @@ com exportação em CSV.
 Roda local de propósito: as chamadas usam o **seu** `cookies.json` e o anti-bot
 da Shopee bloqueia IP de datacenter. Hospedar não ajudaria.
 
-Para mexer no front com hot reload, deixe o `python3 main.py` de pé e rode
+Para mexer no front com hot reload, deixe o `python main.py` de pé e rode
 `npm run dev` em outro terminal (porta 3000, com proxy para o backend).
 
 ## Arquitetura

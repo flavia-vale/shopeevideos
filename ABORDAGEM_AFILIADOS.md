@@ -62,7 +62,7 @@ endpoint a partir de uma captura de tráfego do app.
 3. Salve o fluxo e rode, informando **o número que apareceu na tela**:
 
 ```bash
-python3 find_affiliate_field.py --dump captura.mitm --valor "1,2mil+"
+python find_affiliate_field.py --dump captura.mitm --valor "1,2mil+"
 ```
 
 Ele varre todos os JSON do dump, acha qual campo tem aquele valor e imprime o
@@ -89,13 +89,13 @@ A URL e o payload aceitam `{shop_id}` e `{item_id}`.
 
 ```bash
 # um produto
-python3 affiliate_scan.py --products https://s.shopee.com.br/4LILktFNEi
+python affiliate_scan.py --products https://s.shopee.com.br/4LILktFNEi
 
 # lista de links, exportando CSV
-python3 affiliate_scan.py --products-file lista.txt --output csv --output-file achados.csv
+python affiliate_scan.py --products-file lista.txt --output csv --output-file achados.csv
 
 # afrouxando o critério
-python3 affiliate_scan.py --products-file lista.txt --min-sales 300 --max-affiliates 100
+python affiliate_scan.py --products-file lista.txt --min-sales 300 --max-affiliates 100
 ```
 
 Aceita link curto, URL completa (`...-i.123.456`) ou `shop_id/item_id` na mesma
@@ -131,7 +131,7 @@ Não existe página hospedada: o painel roda na sua máquina, em
 `http://localhost:10000`.
 
 ```bash
-python3 main.py
+python main.py
 ```
 
 Isso é escolha de projeto, não preguiça. As chamadas vão com o **seu**
@@ -163,7 +163,7 @@ Para automatizar (rodar de madrugada, alimentar planilha), use o CLI, que faz o
 mesmo sem o painel:
 
 ```bash
-python3 affiliate_scan.py --products-file lista.txt --output csv --output-file achados.csv
+python affiliate_scan.py --products-file lista.txt --output csv --output-file achados.csv
 ```
 
 ## Antes de capturar
@@ -183,10 +183,10 @@ tempos:
 
 ```bash
 # 1. a API oficial gera os candidatos, já filtrados por vendas
-python3 shopee_openapi.py --keyword "tenis feminino" --min-sales 300 --output lista.txt
+python shopee_openapi.py --keyword "tenis feminino" --min-sales 300 --output lista.txt
 
 # 2. o scan mede a concorrência só em quem passou
-python3 affiliate_scan.py --products-file lista.txt
+python affiliate_scan.py --products-file lista.txt
 ```
 
 Assim a chamada cara (com cookie e risco de 418) roda em dezenas de produtos,
