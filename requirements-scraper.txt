@@ -1,0 +1,4 @@
+# Só para a abordagem antiga (contagem de vídeos com scraper.py/diagnose.py).
+# O painel não precisa disto.
+-r requirements.txt
+playwright==1.42.0

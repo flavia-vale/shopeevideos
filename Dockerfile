@@ -9,10 +9,10 @@ RUN apt-get update && apt-get install -y curl
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt-get install -y nodejs
 
 # Copia arquivos de dependências primeiro
-COPY package.json requirements.txt ./
+COPY package.json requirements.txt requirements-scraper.txt ./
 
 # Instala dependências Python e Node.js
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements-scraper.txt
 RUN npm install
 
 # Instala os navegadores do Playwright necessários

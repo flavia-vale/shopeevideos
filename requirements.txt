@@ -1,6 +1,6 @@
-playwright==1.42.0
-python-dotenv==1.0.1
+# Painel e varredura vendas x afiliados
 flask==3.0.2
 flask-cors==4.0.0
-gunicorn==21.2.0
 httpx[http2]==0.27.0
+python-dotenv==1.0.1
+gunicorn==21.2.0

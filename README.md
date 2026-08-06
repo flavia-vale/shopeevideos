@@ -18,8 +18,14 @@ passo está em **[ABORDAGEM_AFILIADOS.md](ABORDAGEM_AFILIADOS.md)**.
 ```bash
 pip install -r requirements.txt
 npm install && npm run build
-python3 main.py                  # -> http://localhost:10000
+python main.py                   # -> http://localhost:10000
 ```
+
+No Windows use `python` no lugar de `python3`. Se o `pip` não for encontrado,
+chame como módulo: `python -m pip install -r requirements.txt`.
+
+O `requirements.txt` cobre só o painel. A abordagem antiga (contagem de vídeos)
+precisa do Playwright, que está em `requirements-scraper.txt`.
 
 Cole os links (um por linha, quantos quiser), ajuste os cortes de vendas e
 afiliados e mande analisar. A tabela sai ordenada pela razão vendas/afiliado,
