@@ -174,26 +174,49 @@ qualquer campo cujo nome case com `affiliate.*count` ou `promoter`. Se a
 contagem estiver naquele payload, já funciona sem configurar nada; se não
 estiver, o produto sai como `no_data` e a captura do passo 1 é necessária.
 
-## Alternativa oficial: Affiliate Open API
+## Gerando candidatos: Affiliate Open API
 
-`open-api.affiliate.shopee.com.br/graphql` está no ar e responde (testado:
-devolve erro de assinatura, não 404). Com App ID e secret de afiliado aprovado,
-o `productOfferV2` entrega catálogo, vendas e comissão **em escala e sem
-anti-bot** — o que resolve o lado "muitas vendas" da conta e serve para gerar a
-lista de candidatos.
+O `shopee_openapi.py` fala com a API oficial, que entrega catálogo, vendas e
+comissão **em escala e sem anti-bot**. Ela resolve o lado "muitas vendas" da
+conta; o que ela **não** expõe é a contagem de afiliados. Daí o fluxo em dois
+tempos:
 
-O que ele **não** expõe é a contagem de afiliados. O desenho que faz sentido:
+```bash
+# 1. a API oficial gera os candidatos, já filtrados por vendas
+python3 shopee_openapi.py --keyword "tenis feminino" --min-sales 300 --output lista.txt
 
-1. Open API lista milhares de produtos por categoria, já filtrados por vendas;
-2. `affiliate_scan.py` mede a concorrência só nos que passaram do filtro.
+# 2. o scan mede a concorrência só em quem passou
+python3 affiliate_scan.py --products-file lista.txt
+```
 
 Assim a chamada cara (com cookie e risco de 418) roda em dezenas de produtos,
 não em milhares.
+
+### Credenciais
+
+Copie o `.env.example` para `.env` e preencha:
+
+```
+SHOPEE_APP_ID=seu_app_id
+SHOPEE_SECRET=sua_chave_secreta
+```
+
+O `.env` está no `.gitignore` — a chave nunca vai para o repositório. Pegue as
+duas no painel de afiliado, em Open API.
+
+A autenticação é `SHA256(app_id + timestamp + corpo + secret)` no header
+`Authorization`. Dois erros comuns e o que significam:
+
+| Mensagem | Causa |
+|---|---|
+| `Invalid Signature` | secret errado — o App ID em si foi aceito |
+| `Request Expired` | relógio da máquina fora de hora; a API rejeita timestamp velho |
 
 ## Arquivos
 
 ```
 shopee_ids.py            resolve links/IDs e converte "1,2mil+" em 1200
+shopee_openapi.py        busca candidatos na Affiliate Open API oficial
 find_affiliate_field.py  acha o campo de afiliados numa captura de tráfego
 affiliate_scan.py        varredura, ranking e saída table/CSV/JSON
 endpoints.json.example   modelo de configuração do endpoint
