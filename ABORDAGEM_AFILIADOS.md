@@ -85,7 +85,27 @@ cp endpoints.json.example endpoints.json
 Preencha `url`, `payload` e `affiliate_count_path` com o que a captura mostrou.
 A URL e o payload aceitam `{shop_id}` e `{item_id}`.
 
-### 3. Varrer
+### 3. Conferir os cookies
+
+O `affiliate_scan` precisa da sua sessão da Shopee em `cookies.json`. A forma
+mais rápida é a extensão **Cookie-Editor** (Chrome ou Edge): abra a Shopee
+logada, clique na extensão, `Export` → `Export as JSON`, e cole num arquivo
+`cookies.json` na raiz do projeto.
+
+Antes de varrer uma lista longa, teste a sessão de verdade:
+
+```bash
+python cookie_helper.py --test
+```
+
+Sem o `--test` ele só confere se o arquivo tem os campos certos — e um arquivo
+perfeito com sessão morta dá 403 do mesmo jeito. Com o `--test` ele faz uma
+chamada real e diz qual dos dois casos é o seu.
+
+Cookies da Shopee duram de 4 a 24 horas. Quando os resultados voltarem como
+"Cookies expirados", é só reexportar.
+
+### 4. Varrer
 
 ```bash
 # um produto

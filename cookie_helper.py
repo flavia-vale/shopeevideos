@@ -82,11 +82,51 @@ Renove sempre que o scraper retornar status "expired".
 """)
 
 
+def test_live(cookies_path: str) -> None:
+    """
+    Bate na API de verdade com um produto conhecido.
+
+    O arquivo pode estar com todos os cookies certos e a sessão já ter morrido —
+    só a chamada real diz. Vale rodar antes de varrer uma lista longa.
+    """
+    import asyncio
+
+    import affiliate_scan
+
+    print("\nTestando a sessão contra a API...")
+    resultado = asyncio.run(
+        affiliate_scan.run(
+            ["303419140/57563387424"],
+            cookies_path=cookies_path,
+            min_sales=0,
+            max_affiliates=10**9,
+            delay=0,
+        )
+    )[0]
+
+    if resultado.status == "expired":
+        print(f"\nSessao RECUSADA: {resultado.error}")
+        print("Exporte os cookies de novo com o navegador logado.")
+        sys.exit(1)
+    if resultado.status == "error":
+        print(f"\nFalha no teste: {resultado.error}")
+        sys.exit(1)
+
+    print("\nSessao ACEITA pela Shopee.")
+    if resultado.affiliates is None:
+        print("A contagem de afiliados ainda nao veio — falta configurar o endpoints.json")
+        print("(veja ABORDAGEM_AFILIADOS.md). Os cookies em si estao bons.")
+    else:
+        print(f"Afiliados: {resultado.affiliates} | Vendas: {resultado.sales}")
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description="Valida cookies de sessao da Shopee")
     p.add_argument("--cookies", default="cookies.json", help="Caminho para o arquivo de cookies (padrao: cookies.json)")
     p.add_argument("--export-from-browser", action="store_true",
                    help="Exibir instrucoes de exportacao")
+    p.add_argument("--test", action="store_true",
+                   help="Alem de validar o arquivo, faz uma chamada real a API")
     args = p.parse_args()
 
     if args.export_from_browser:
@@ -104,6 +144,9 @@ def main() -> None:
         sys.exit(1)
 
     validate(cookies)
+
+    if args.test:
+        test_live(args.cookies)
 
 
 if __name__ == "__main__":
