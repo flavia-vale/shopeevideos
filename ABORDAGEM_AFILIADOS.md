@@ -55,11 +55,19 @@ endpoint a partir de uma captura de tráfego do app.
 
 ### 1. Capturar o campo (uma vez só)
 
-1. Suba o mitmproxy e aponte o celular para ele (é o mesmo setup que você já
-   usou nas capturas `.mitm` anteriores).
-2. No app, abra a página de afiliado do produto — a tela do "Compartilhe para
-   Ganhar", onde aparece "1,2mil+ Afiliados promoveram".
-3. Salve o fluxo e rode, informando **o número que apareceu na tela**:
+O passo a passo completo, com os detalhes de Windows e iPhone, está em
+**[CAPTURA_MITMPROXY.md](CAPTURA_MITMPROXY.md)**. Resumo:
+
+```bash
+python -m pip install mitmproxy
+mitmdump -s mitm_finder.py --set alvo="1,2mil+" --listen-port 8080
+```
+
+Aponte o celular para o proxy, abra no app a tela de afiliado do produto, e o
+`mitm_finder` avisa na hora em que achar o número — com a URL e o caminho JSON —
+e grava um `endpoints.json.sugerido`.
+
+Se você já tem um dump `.mitm` salvo, dá para vasculhar sem repetir a captura:
 
 ```bash
 python find_affiliate_field.py --dump captura.mitm --valor "1,2mil+"
@@ -261,7 +269,8 @@ shopee_ids.py            resolve links/IDs e converte "1,2mil+" em 1200
 shopee_openapi.py        busca candidatos na Affiliate Open API oficial
 setup_env.py             cria o .env com as credenciais e testa na API
 export_cookies.py        gera o cookies.json a partir do navegador ou colagem
-find_affiliate_field.py  acha o campo de afiliados numa captura de tráfego
+find_affiliate_field.py  acha o campo de afiliados num dump ja salvo
+mitm_finder.py           acha o mesmo campo ao vivo, durante a captura
 affiliate_scan.py        varredura, ranking e saída table/CSV/JSON
 endpoints.json.example   modelo de configuração do endpoint
 ```
