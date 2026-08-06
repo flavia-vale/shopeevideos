@@ -1,0 +1,23 @@
+{
+  "_comentario": [
+    "Copie para endpoints.json e preencha depois de rodar find_affiliate_field.py.",
+    "url, headers e payload aceitam os placeholders {shop_id} e {item_id}.",
+    "payload_json_fields lista campos que a Shopee espera como JSON serializado",
+    "dentro do JSON (o page_context da aba de criadores é assim).",
+    "Sem esse arquivo o affiliate_scan.py usa a aba de criadores e procura os",
+    "campos pelo nome — funciona se a contagem estiver naquela resposta."
+  ],
+
+  "affiliate_stats": {
+    "method": "POST",
+    "url": "https://sv.shopee.com.br/api/vX/PREENCHER",
+    "headers": {},
+    "payload": {
+      "item_id": "{item_id}",
+      "shop_id": "{shop_id}"
+    },
+    "payload_json_fields": [],
+    "affiliate_count_path": "data.product.PREENCHER",
+    "sales_path": "data.product.historical_sold"
+  }
+}
