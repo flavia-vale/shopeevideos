@@ -94,7 +94,63 @@ def count_candidates(body: Any) -> list[tuple[str, int]]:
     return out
 
 
+def sv_list_len(body: Any) -> int | None:
+    """Tamanho de shopee_video_info_list — o candidato mais direto a contagem.
+
+    Vazia num produto que comprovadamente tem vídeo de afiliado significa que
+    a web não popula o campo. Preenchida significa que achamos o contador.
+    """
+    for path, val in walk(body):
+        if path.endswith("shopee_video_info_list") and isinstance(val, list):
+            return len(val)
+    return None
+
+
+async def probe_many(args: argparse.Namespace) -> int:
+    """Compara vários produtos de uma vez — é assim que se separa
+    'campo vazio porque não tem vídeo' de 'campo que a web nunca preenche'."""
+    produtos = [p.strip() for p in args.products.split(",") if p.strip()]
+    linhas = []
+
+    async with VideoCounter(args.profile, headless=False, cdp=args.cdp) as counter:
+        page = counter._page
+        for prod in produtos:
+            shop_id, item_id = parse_product(prod)
+            await page.goto(
+                f"https://shopee.com.br/product/{shop_id}/{item_id}",
+                wait_until="domcontentloaded", timeout=60_000,
+            )
+            await page.wait_for_timeout(2500)
+            res = await page.evaluate(
+                _GET_JS, PDP_URL.format(shop_id=shop_id, item_id=item_id)
+            )
+            body = res["body"]
+            n = sv_list_len(body) if res["status"] == 200 else None
+            linhas.append((f"{shop_id}/{item_id}", res["status"], n, count_candidates(body)))
+            log.info("%s/%s -> HTTP %s, shopee_video_info_list=%s",
+                     shop_id, item_id, res["status"], n)
+            await asyncio.sleep(1.5)
+
+    print(f"\n{'PRODUTO':<26}{'HTTP':>6}{'sv_video_info_list':>21}  OUTRAS CONTAGENS")
+    print("-" * 82)
+    for key, status, n, cands in linhas:
+        extra = ", ".join(f"{p.rsplit('.',1)[-1]}={v}" for p, v in cands[:3]) or "—"
+        print(f"{key:<26}{status:>6}{('vazia' if n == 0 else n if n is not None else '—'):>21}  {extra}")
+
+    populadas = [n for _, _, n, _ in linhas if n]
+    print()
+    if populadas:
+        print("ACHAMOS: a lista vem preenchida — dá para contar por aqui.")
+    else:
+        print("A lista veio vazia em TODOS, inclusive nos que comprovadamente têm")
+        print("vídeo de afiliado. Conclusão: a web não popula esse campo.")
+    return 0
+
+
 async def run(args: argparse.Namespace) -> int:
+    if args.products:
+        return await probe_many(args)
+
     if args.url:
         url = args.url
     else:
@@ -148,6 +204,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--cdp", nargs="?", const=DEFAULT_CDP, default=None, metavar="URL")
     p.add_argument("--profile", type=Path, default=DEFAULT_PROFILE)
     p.add_argument("--product", default="862915940/18399230627")
+    p.add_argument("--products", help="vários produtos separados por vírgula, para comparar")
     p.add_argument("--url", help="chama esta URL em vez da PDP padrão")
     p.add_argument("--out", type=Path, default=Path("pdp.json"))
     args = p.parse_args(argv)
