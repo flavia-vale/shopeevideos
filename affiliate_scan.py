@@ -243,7 +243,14 @@ async def fetch_stats(
     if response.status_code == 418:
         raise PermissionError("bloqueio 418 (anti-bot) — renove os cookies ou troque de IP")
     if response.status_code in (401, 403):
-        raise PermissionError(f"sessão inválida ({response.status_code}) — renove os cookies")
+        # Nao da para saber daqui se o culpado e o cookie ou o endpoint: a API
+        # da aba de criadores recusa sessao de navegador mesmo com cookie bom.
+        # Quem separa os dois casos e o `cookie_helper.py --test`.
+        raise PermissionError(
+            f"endpoint recusou a chamada ({response.status_code}) — "
+            "rode 'cookie_helper.py --test' para saber se o problema e a sessao "
+            "ou o endpoint"
+        )
     response.raise_for_status()
     return response.json()
 

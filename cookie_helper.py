@@ -100,18 +100,76 @@ Renove sempre que o scraper retornar status "expired".
 """)
 
 
+def check_session(cookies_path: str) -> bool:
+    """
+    Pergunta a Shopee quem esta logado.
+
+    E um endpoint do site normal, que responde a cookie de navegador. Se ele
+    reconhece a sessao, os cookies estao bons — e um 403 mais adiante e problema
+    do outro endpoint, nao do arquivo.
+    """
+    import httpx
+
+    import affiliate_scan
+
+    cookies = affiliate_scan.load_cookies(cookies_path)
+
+    print("\n[1] A Shopee reconhece a sessao?")
+    try:
+        resp = httpx.get(
+            "https://shopee.com.br/api/v4/account/basic/get_account_info",
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                ),
+                "Referer": "https://shopee.com.br/",
+                "X-Requested-With": "XMLHttpRequest",
+            },
+            cookies=cookies,
+            timeout=20.0,
+            follow_redirects=True,
+        )
+    except Exception as e:
+        print(f"    Falha de rede: {e}")
+        return False
+
+    if resp.status_code != 200:
+        print(f"    HTTP {resp.status_code} — nem essa chamada passou.")
+        print("    Costuma ser bloqueio por IP. Tente pelo 4G do celular.")
+        return False
+
+    try:
+        dados = resp.json().get("data") or {}
+    except Exception:
+        print("    Resposta ilegivel.")
+        return False
+
+    if dados.get("userid") or dados.get("username"):
+        print(f"    SIM — logada como '{dados.get('username', '?')}'. Cookies OK.")
+        return True
+
+    print("    NAO — a Shopee respondeu como visitante anonimo.")
+    print("    Reexporte com o navegador logado.")
+    return False
+
+
 def test_live(cookies_path: str) -> None:
     """
-    Bate na API de verdade com um produto conhecido.
+    Testa as duas coisas que podem estar erradas, separadamente.
 
-    O arquivo pode estar com todos os cookies certos e a sessão já ter morrido —
-    só a chamada real diz. Vale rodar antes de varrer uma lista longa.
+    Um 403 na API de afiliados nao prova que os cookies estao ruins: aquele
+    endpoint e do app e pode recusar a sessao do navegador de qualquer jeito.
+    Sem separar, todo problema vira "renove os cookies" — que foi o que essa
+    ferramenta dizia antes, mandando renovar cookies que estavam perfeitos.
     """
     import asyncio
 
     import affiliate_scan
 
-    print("\nTestando a sessão contra a API...")
+    sessao_ok = check_session(cookies_path)
+
+    print("\n[2] A API de afiliados responde?")
     resultado = asyncio.run(
         affiliate_scan.run(
             ["303419140/57563387424"],
@@ -123,19 +181,27 @@ def test_live(cookies_path: str) -> None:
     )[0]
 
     if resultado.status == "expired":
-        print(f"\nSessao RECUSADA: {resultado.error}")
-        print("Exporte os cookies de novo com o navegador logado.")
-        sys.exit(1)
-    if resultado.status == "error":
-        print(f"\nFalha no teste: {resultado.error}")
+        print(f"    NAO — {resultado.error}")
+        if sessao_ok:
+            print("\nDiagnostico: seus cookies estao BONS (o passo 1 passou).")
+            print("O endpoint da aba de criadores e que recusa a sessao do navegador.")
+            print("Ele so vai funcionar depois da captura do trafego do app —")
+            print("veja o passo 1 do ABORDAGEM_AFILIADOS.md.")
+        else:
+            print("\nDiagnostico: a sessao nao foi reconhecida no passo 1.")
+            print("Reexporte os cookies com o navegador logado.")
         sys.exit(1)
 
-    print("\nSessao ACEITA pela Shopee.")
+    if resultado.status == "error":
+        print(f"    Falha: {resultado.error}")
+        sys.exit(1)
+
+    print("    SIM — a API respondeu.")
     if resultado.affiliates is None:
-        print("A contagem de afiliados ainda nao veio — falta configurar o endpoints.json")
-        print("(veja ABORDAGEM_AFILIADOS.md). Os cookies em si estao bons.")
+        print("\nA contagem de afiliados nao veio no corpo da resposta.")
+        print("Falta configurar o endpoints.json (veja ABORDAGEM_AFILIADOS.md).")
     else:
-        print(f"Afiliados: {resultado.affiliates} | Vendas: {resultado.sales}")
+        print(f"\nAfiliados: {resultado.affiliates} | Vendas: {resultado.sales}")
 
 
 def main() -> None:

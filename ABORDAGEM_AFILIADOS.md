@@ -109,9 +109,16 @@ Antes de varrer uma lista longa, teste a sessão de verdade:
 python cookie_helper.py --test
 ```
 
-Sem o `--test` ele só confere se o arquivo tem os campos certos — e um arquivo
-perfeito com sessão morta dá 403 do mesmo jeito. Com o `--test` ele faz uma
-chamada real e diz qual dos dois casos é o seu.
+Ele testa duas coisas separadas, porque são dois problemas diferentes:
+
+1. **A Shopee reconhece a sessão?** Pergunta quem está logado num endpoint do
+   site normal, que aceita cookie de navegador.
+2. **A API de afiliados responde?** A chamada que a varredura realmente faz.
+
+A separação importa: o passo 2 pode dar 403 com os cookies perfeitamente bons,
+porque o endpoint da aba de criadores é do app e recusa sessão de navegador de
+qualquer jeito. Sem separar, todo problema virava "renove os cookies" — e
+renovar não resolvia nada.
 
 Cookies da Shopee duram de 4 a 24 horas. Quando os resultados voltarem como
 "Cookies expirados", é só reexportar.
