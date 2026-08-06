@@ -194,15 +194,19 @@ não em milhares.
 
 ### Credenciais
 
-Copie o `.env.example` para `.env` e preencha:
-
-```
-SHOPEE_APP_ID=seu_app_id
-SHOPEE_SECRET=sua_chave_secreta
+```bash
+python setup_env.py
 ```
 
-O `.env` está no `.gitignore` — a chave nunca vai para o repositório. Pegue as
-duas no painel de afiliado, em Open API.
+Ele pergunta o App ID e a chave, grava o `.env` no formato certo e já testa a
+credencial na API. A chave é digitada às escondidas e não fica no histórico do
+terminal.
+
+Quem preferir na mão: copie o `.env.example` para `.env` e preencha
+`SHOPEE_APP_ID` e `SHOPEE_SECRET` — sem aspas e sem espaço em volta do `=`.
+
+De qualquer jeito o `.env` está no `.gitignore`, então a chave nunca vai para o
+repositório. Pegue as duas no painel de afiliado, em Open API.
 
 A autenticação é `SHA256(app_id + timestamp + corpo + secret)` no header
 `Authorization`. Dois erros comuns e o que significam:
@@ -217,6 +221,7 @@ A autenticação é `SHA256(app_id + timestamp + corpo + secret)` no header
 ```
 shopee_ids.py            resolve links/IDs e converte "1,2mil+" em 1200
 shopee_openapi.py        busca candidatos na Affiliate Open API oficial
+setup_env.py             cria o .env com as credenciais e testa na API
 find_affiliate_field.py  acha o campo de afiliados numa captura de tráfego
 affiliate_scan.py        varredura, ranking e saída table/CSV/JSON
 endpoints.json.example   modelo de configuração do endpoint
