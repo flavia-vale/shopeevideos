@@ -39,9 +39,29 @@ Login do navegador — manual, uma vez só:
 python -m shopeeops.video_count login
 ```
 
-Abre um Chrome visível. Entre na Shopee (QR code pelo app é o mais rápido),
-abra um vídeo em sv.shopee.com.br para confirmar, volte ao terminal e aperte
-ENTER. A sessão fica salva em `~/.shopeeops/chrome-profile`.
+Abre um Chrome visível. Entre na Shopee (QR code pelo app é o mais rápido) e
+confirme abrindo um vídeo, ex.
+`https://sv.shopee.com.br/web/@x/video/CGVdk7T6BwD4JYM_AAAAAA==`. A home do
+sv.shopee.com.br só mostra "baixe o app" no desktop — isso é normal. Volte ao
+terminal e aperte ENTER.
+
+> **Se o captcha não carregar** ("Erro de Carregamento", `generate captcha
+> error`): a Shopee detectou o navegador automatizado. Use o modo CDP, em que
+> o Playwright **não abre** navegador nenhum e sim se conecta a um Chrome comum
+> que você mesma abriu — sem flags de automação, o captcha funciona:
+>
+> ```bash
+> python -m shopeeops.video_count login --cdp   # imprime o passo a passo
+> ```
+>
+> Depois de logar no Chrome que ele mandou abrir, deixe-o aberto e acrescente
+> `--cdp` aos outros comandos.
+
+Para testar a sessão sem gastar uma varredura inteira:
+
+```bash
+python -m shopeeops.video_count check        # ou: check --cdp
+```
 
 ## Uso
 

@@ -110,10 +110,16 @@ def count_videos(offers: list, args: argparse.Namespace) -> dict:
     log.info("contando vídeos de %d produtos (isso demora)…", len(targets))
 
     async def run():
-        async with VideoCounter(args.profile, headless=not args.no_headless) as counter:
+        async with VideoCounter(
+            args.profile, headless=not args.no_headless, cdp=args.cdp
+        ) as counter:
             return await counter.count_many(targets, delay=args.delay)
 
-    results = asyncio.run(run())
+    try:
+        results = asyncio.run(run())
+    except Exception as exc:
+        log.error("navegador: %s", exc)
+        return {}
 
     if results and all(r.status == "not_logged_in" for r in results):
         log.error(
@@ -172,6 +178,10 @@ def main(argv: list[str] | None = None) -> int:
                    help="salva os candidatos num .txt pronto para colar no script do console")
     p.add_argument("--delay", type=float, default=2.0, help="segundos entre contagens")
     p.add_argument("--no-headless", action="store_true", help="mostra o navegador")
+    p.add_argument("--cdp", nargs="?", const="http://127.0.0.1:9222", default=None,
+                   metavar="URL",
+                   help="conecta a um Chrome já aberto em modo depuração, "
+                        "em vez de abrir um novo (resolve captcha no login)")
     p.add_argument("--profile", type=Path, default=None, help="perfil do Chrome")
     p.add_argument("--top", type=int, default=25, help="linhas na tabela (padrão 25)")
     p.add_argument("--csv", type=Path, help="salva o ranking completo em CSV")
