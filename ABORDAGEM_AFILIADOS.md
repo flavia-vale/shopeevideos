@@ -87,10 +87,21 @@ A URL e o payload aceitam `{shop_id}` e `{item_id}`.
 
 ### 3. Conferir os cookies
 
-O `affiliate_scan` precisa da sua sessão da Shopee em `cookies.json`. A forma
-mais rápida é a extensão **Cookie-Editor** (Chrome ou Edge): abra a Shopee
-logada, clique na extensão, `Export` → `Export as JSON`, e cole num arquivo
-`cookies.json` na raiz do projeto.
+O `affiliate_scan` precisa da sua sessão da Shopee em `cookies.json`:
+
+```bash
+python export_cookies.py            # lê direto do navegador instalado
+python export_cookies.py --colar    # você cola, ele formata
+```
+
+O modo automático depende do `browser-cookie3` e nem sempre funciona — o Chrome
+no Windows cifra o banco de cookies com App-Bound Encryption, e aí só ele
+mesmo consegue ler. Quando falhar, o script manda para o modo `--colar`.
+
+O `--colar` aceita as duas formas de tirar cookies do navegador: o JSON da
+extensão **Cookie-Editor** ou a linha do header `Cookie:` do DevTools (F12 →
+Network → clique numa requisição → Request Headers). A segunda é a mais
+confiável, porque pega também os cookies HttpOnly, que o console não enxerga.
 
 Antes de varrer uma lista longa, teste a sessão de verdade:
 
@@ -242,6 +253,7 @@ A autenticação é `SHA256(app_id + timestamp + corpo + secret)` no header
 shopee_ids.py            resolve links/IDs e converte "1,2mil+" em 1200
 shopee_openapi.py        busca candidatos na Affiliate Open API oficial
 setup_env.py             cria o .env com as credenciais e testa na API
+export_cookies.py        gera o cookies.json a partir do navegador ou colagem
 find_affiliate_field.py  acha o campo de afiliados numa captura de tráfego
 affiliate_scan.py        varredura, ranking e saída table/CSV/JSON
 endpoints.json.example   modelo de configuração do endpoint
