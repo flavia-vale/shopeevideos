@@ -12,8 +12,22 @@ import sys
 import time
 from pathlib import Path
 
-REQUIRED_COOKIES = ["SPC_U", "SPC_EC", "SPC_SI", "SPC_F"]
+REQUIRED_COOKIES = ["SPC_U", "SPC_SI", "SPC_F"]
+
+# O token de sessao mudou de nome: exports antigos trazem SPC_EC, os atuais
+# trazem SPC_ST. Basta um dos dois estar presente.
+SESSION_TOKENS   = ["SPC_ST", "SPC_EC"]
+
 SHOPEE_DOMAINS   = [".shopee.com.br", "shopee.com.br"]
+
+
+def expiry_of(cookie: dict) -> float:
+    """Cada exportador nomeia a validade de um jeito; -1 quando nao ha."""
+    for campo in ("expires", "expirationDate", "expiry"):
+        valor = cookie.get(campo)
+        if isinstance(valor, (int, float)):
+            return float(valor)
+    return -1.0
 
 
 def load(path: str) -> list[dict]:
@@ -32,11 +46,15 @@ def validate(cookies: list[dict]) -> None:
     print(f"\n{'Cookie':<15} {'Presente':>10} {'Expirado':>10}  Domínio")
     print("-" * 60)
 
+    # O token de sessao entra na conferencia pelo nome que o export usou.
+    token = next((t for t in SESSION_TOKENS if t in by_name), None)
+    a_conferir = REQUIRED_COOKIES + [token or " ou ".join(SESSION_TOKENS)]
+
     all_ok = True
-    for name in REQUIRED_COOKIES:
+    for name in a_conferir:
         c = by_name.get(name)
         present = c is not None
-        expires = c.get("expires", -1) if c else -1
+        expires = expiry_of(c) if c else -1
         expired = (expires != -1 and expires < now) if present else False
         domain  = c.get("domain", "?") if c else "—"
 
@@ -57,7 +75,7 @@ def validate(cookies: list[dict]) -> None:
         sys.exit(1)
 
     print(f"\nTotal de cookies no arquivo: {len(cookies)}")
-    extras = [c["name"] for c in cookies if c["name"] not in REQUIRED_COOKIES]
+    extras = [c["name"] for c in cookies if c["name"] not in a_conferir]
     if extras:
         print(f"Cookies extras (nao obrigatorios): {', '.join(extras)}")
 

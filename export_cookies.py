@@ -29,17 +29,27 @@ OUTPUT = Path("cookies.json")
 DOMAIN = "shopee.com.br"
 
 # Sem estes a Shopee trata a sessão como anônima.
-REQUIRED = ["SPC_U", "SPC_EC", "SPC_SI", "SPC_F"]
+REQUIRED = ["SPC_U", "SPC_SI", "SPC_F"]
+
+# O token de sessão mudou de nome ao longo do tempo: exports antigos trazem
+# SPC_EC, os atuais trazem SPC_ST. Qualquer um dos dois serve.
+SESSION_TOKENS = ["SPC_ST", "SPC_EC"]
 
 MANUAL_HELP = """
 Como copiar os cookies (jeito que sempre funciona):
 
   1. Abra shopee.com.br no navegador, LOGADA na sua conta
   2. Aperte F12 para abrir o DevTools
-  3. Vá na aba Network (Rede) e recarregue a página (F5)
-  4. Clique em qualquer requisição da lista
-  5. Em Request Headers, ache a linha que começa com "Cookie:"
-  6. Copie o conteúdo dela inteiro (é longo, tudo numa linha só)
+  3. Vá na aba Network (Rede)
+  4. Na caixa de filtro, digite:  shopee.com.br/api
+  5. Recarregue a página (F5) e clique numa das requisições que sobraram
+  6. Em Request Headers, ache a linha que começa com "Cookie:"
+  7. Copie o conteúdo dela inteiro (é longo, tudo numa linha só)
+
+O filtro do passo 4 importa: a maior parte do que aparece na aba Network vai
+para o CDN (deo.shopeemobile.com, patchcdn...), e o navegador não manda cookie
+para lá. Se a requisição escolhida não tiver linha "Cookie:", é uma dessas —
+escolha outra, do domínio shopee.com.br.
 
 Depois rode:
 
@@ -151,6 +161,8 @@ def salvar(cookies: list[dict]) -> int:
 
     presentes = {c["name"] for c in cookies}
     faltando = [n for n in REQUIRED if n not in presentes]
+    if not any(t in presentes for t in SESSION_TOKENS):
+        faltando.append(" ou ".join(SESSION_TOKENS))
 
     OUTPUT.write_text(json.dumps(cookies, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"\n✓ {OUTPUT.resolve()} gravado com {len(cookies)} cookies.")
