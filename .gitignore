@@ -7,3 +7,6 @@ __pycache__/
 endpoints.json
 affiliate_scan.log
 scraper.log
+dist/
+node_modules/
+.vite/

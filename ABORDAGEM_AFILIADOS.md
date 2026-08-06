@@ -125,6 +125,47 @@ Produto                      Vendas  Afiliados   V/Afil  Status
 | `no_data` | resposta sem o campo de afiliados — volte ao passo 1 |
 | `expired` | 403/418: renove os cookies ou troque de IP |
 
+## Rotina do dia a dia
+
+Não existe página hospedada: o painel roda na sua máquina, em
+`http://localhost:10000`.
+
+```bash
+python3 main.py
+```
+
+Isso é escolha de projeto, não preguiça. As chamadas vão com o **seu**
+`cookies.json`, e o anti-bot da Shopee derruba requisição vinda de IP de
+datacenter — foi exatamente o que aconteceu nos testes (403 em toda chamada).
+Num servidor hospedado seria 403 o tempo todo; da sua internet, com sua sessão,
+passa.
+
+O ciclo é em lote, não um link por vez:
+
+1. **Junte candidatos** durante a semana — do feed de afiliado, dos "Mais
+   Vendidos" da categoria, do que vê rendendo no TikTok. Um link por linha num
+   bloco de notas.
+2. **Cole tudo de uma vez** no painel (aceita link curto, URL completa ou
+   `shop_id/item_id` misturados na mesma lista) e mande analisar.
+3. **Deixe rodando.** São ~3,5s por produto por causa da pausa anti-bot: 50
+   produtos levam uns 3 minutos. A barra de progresso mostra o andamento e a
+   tabela vai preenchendo.
+4. **Olhe o topo da tabela.** Ela sai ordenada pela razão vendas/afiliado — os
+   melhores achados ficam em cima, marcados como Oceano Azul.
+5. **Exporte o CSV** para guardar o histórico e comparar semana que vem: um
+   produto que estava em 20 e foi para 400 afiliados fechou a janela.
+
+Os campos "Vendas mínimas" e "Máx. de afiliados" só mudam o rótulo — a tabela
+mostra todos os produtos analisados de qualquer jeito. Comece frouxo
+(`min 100 / máx 50`) e vá apertando conforme conhecer a sua categoria.
+
+Para automatizar (rodar de madrugada, alimentar planilha), use o CLI, que faz o
+mesmo sem o painel:
+
+```bash
+python3 affiliate_scan.py --products-file lista.txt --output csv --output-file achados.csv
+```
+
 ## Antes de capturar
 
 Sem `endpoints.json`, o `affiliate_scan.py` chama o endpoint da aba de

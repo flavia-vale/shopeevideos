@@ -1,13 +1,45 @@
-# Shopee Video Counter
+# Shopee Oceano Azul
 
-Identifica **Oceanos Azuis** contando vídeos na aba "Aprender com criadores" de produtos Shopee.
+Acha produtos com demanda comprovada e pouca gente divulgando.
+
+Há duas abordagens no repositório:
+
+| Abordagem | Métrica | Onde |
+|---|---|---|
+| **Vendas x afiliados** (atual) | `vendas ÷ afiliados promovendo` | painel web + `affiliate_scan.py` |
+| Contagem de vídeos (anterior) | vídeos na aba de criadores | `scraper.py` |
+
+A primeira é a recomendada — "Afiliados promoveram" é a concorrência dita pela
+própria Shopee, enquanto a contagem de vídeos era só um proxy dela. O passo a
+passo está em **[ABORDAGEM_AFILIADOS.md](ABORDAGEM_AFILIADOS.md)**.
+
+## Painel web
+
+```bash
+pip install -r requirements.txt
+npm install && npm run build
+python3 main.py                  # -> http://localhost:10000
+```
+
+Cole os links (um por linha, quantos quiser), ajuste os cortes de vendas e
+afiliados e mande analisar. A tabela sai ordenada pela razão vendas/afiliado,
+com exportação em CSV.
+
+Roda local de propósito: as chamadas usam o **seu** `cookies.json` e o anti-bot
+da Shopee bloqueia IP de datacenter. Hospedar não ajudaria.
+
+Para mexer no front com hot reload, deixe o `python3 main.py` de pé e rode
+`npm run dev` em outro terminal (porta 3000, com proxy para o backend).
 
 ## Arquitetura
 
 ```
-cookie_helper.py   — valida/inspeciona cookies de sessão
-diagnose.py        — sonda seletores CSS/Shadow DOM em tempo real
-scraper.py         — scraper principal com retry, logging e saída CSV/JSON
+main.py                  — servidor do painel (Flask + front React)
+shopee_ids.py            — resolve links/IDs e converte "1,2mil+" em 1200
+affiliate_scan.py        — varredura vendas x afiliados (CLI)
+find_affiliate_field.py  — acha o campo de afiliados numa captura de tráfego
+cookie_helper.py         — valida/inspeciona cookies de sessão
+scraper.py, diagnose.py  — abordagem antiga, contagem de vídeos
 ```
 
 ## Setup
@@ -18,7 +50,9 @@ playwright install chromium
 cp cookies.json.example cookies.json
 ```
 
-## 1. Exportar Cookies
+## Contagem de vídeos (abordagem antiga)
+
+### 1. Exportar Cookies
 
 ```bash
 python cookie_helper.py --cookies cookies.json --export-from-browser

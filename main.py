@@ -1,90 +1,163 @@
-import os
-from flask import Flask, send_from_directory, request, jsonify
-from flask_cors import CORS
+"""
+Servidor local do painel.
+
+Serve o front (dist/) e expõe a varredura de vendas x afiliados. A varredura é
+lenta de propósito — tem pausa entre produtos para não acordar o anti-bot — então
+ela roda numa thread e o front acompanha por polling, em vez de segurar a
+requisição HTTP aberta por minutos.
+
+    python3 main.py     →  http://localhost:10000
+"""
+
 import asyncio
-import importlib
-import subprocess
+import os
+import threading
+import uuid
+from dataclasses import asdict
+from datetime import datetime
+from pathlib import Path
 
-# Importa o scraper dinamicamente para evitar problemas de loop de evento
-scraper = importlib.import_module("scraper")
+from flask import Flask, jsonify, request, send_from_directory
+from flask_cors import CORS
 
-app = Flask(__name__, static_folder='dist')
+import affiliate_scan
+
+app = Flask(__name__, static_folder="dist")
 CORS(app)
 
-@app.route('/api/extract_mitm', methods=['GET'])
-def extract_mitm():
-    try:
-        import re
-        def extract_strings(filename, output_filename):
-            with open(filename, 'rb') as f:
-                data = f.read()
-            strings = re.findall(b'[a-zA-Z0-9./?=&_-]{5,}', data)
-            with open(output_filename, 'w') as out:
-                for s in strings:
-                    try:
-                        out.write(s.decode('utf-8') + '\n')
-                    except:
-                        pass
-        
-        extract_strings('.dyad/media/1f6dd4416d5ad9966f1399c2a2722d0e.mitm', 'strings1.txt')
-        extract_strings('.dyad/media/f306333995e49235958be36ecaae81d8.mitm', 'strings2.txt')
-        return jsonify({"status": "success"})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+# Jobs em memória. O painel é de uso local e single-user: reiniciar o servidor
+# limpa tudo, e é o esperado.
+JOBS: dict[str, dict] = {}
+JOBS_LOCK = threading.Lock()
 
-# Rota para servir o frontend React
-@app.route('/', defaults={'path': ''})
-@app.route('/<path:path>')
-def serve(path):
-    if path != "" and os.path.exists(app.static_folder + '/' + path):
-        return send_from_directory(app.static_folder, path)
+MAX_LINKS = 300
+
+
+def run_job(job_id: str, entries: list[str], min_sales: int, max_affiliates: int, delay: float):
+    def on_result(stats):
+        with JOBS_LOCK:
+            JOBS[job_id]["results"].append(asdict(stats))
+            JOBS[job_id]["done"] += 1
+
+    try:
+        asyncio.run(
+            affiliate_scan.run(
+                entries,
+                cookies_path="cookies.json",
+                min_sales=min_sales,
+                max_affiliates=max_affiliates,
+                delay=delay,
+                on_result=on_result,
+            )
+        )
+        status, error = "finished", None
+    except Exception as e:  # falha global: rede caiu, cookies ilegíveis, etc.
+        status, error = "failed", str(e)
+
+    with JOBS_LOCK:
+        JOBS[job_id]["status"] = status
+        JOBS[job_id]["error"] = error
+        JOBS[job_id]["finished_at"] = datetime.now().isoformat(timespec="seconds")
+
+
+@app.route("/api/status")
+def status():
+    """Diz ao painel o que já está configurado, para ele avisar antes de varrer."""
+    cookies_ok = False
+    cookie_names: list[str] = []
+    if Path("cookies.json").exists():
+        cookies = affiliate_scan.load_cookies("cookies.json")
+        cookie_names = sorted(cookies)
+        cookies_ok = "SPC_U" in cookies or "SPC_EC" in cookies
+
+    return jsonify(
+        {
+            "cookies_present": Path("cookies.json").exists(),
+            "cookies_ok": cookies_ok,
+            "cookie_names": cookie_names,
+            "endpoint_configured": Path(affiliate_scan.ENDPOINTS_FILE).exists(),
+        }
+    )
+
+
+@app.route("/api/scan", methods=["POST"])
+def scan():
+    """Inicia uma varredura. Aceita um link ou uma lista — o fluxo é o mesmo."""
+    data = request.get_json(silent=True) or {}
+    raw = data.get("links", "")
+
+    if isinstance(raw, str):
+        entries = [line.strip() for line in raw.splitlines() if line.strip()]
     else:
-        return send_from_directory(app.static_folder, 'index.html')
+        entries = [str(x).strip() for x in raw if str(x).strip()]
 
-# API para disparar o scraper
-@app.route('/api/scan', methods=['POST'])
-def scan_product():
-    data = request.json
-    product_url = data.get('url')
-    
-    if not product_url:
-        return jsonify({"error": "URL não fornecida"}), 400
+    entries = [e for e in entries if not e.startswith("#")]
 
-    # Extrai ID do produto da URL
-    import re
-    match = re.search(r'i\.(\d+)\.(\d+)', product_url)
-    if not match:
-        return jsonify({"error": "URL inválida"}), 400
-    
-    product_id = f"{match.group(1)}/{match.group(2)}"
-    
-    # Executa o scraper (simplificado para o exemplo)
+    if not entries:
+        return jsonify({"error": "Nenhum link informado"}), 400
+    if len(entries) > MAX_LINKS:
+        return jsonify({"error": f"Máximo de {MAX_LINKS} links por varredura"}), 400
+
     try:
-        # Nota: Em produção, você usaria uma fila de tarefas (Celery/Redis)
-        # Aqui rodamos de forma assíncrona simples para demonstração
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
-        # Configurações básicas
-        results = loop.run_until_complete(scraper.run(
-            ids=[product_id],
-            cookies_path="cookies.json",
-            threshold=5
-        ))
-        
-        if results and len(results) > 0:
-            res = results[0]
-            return jsonify({
-                "id": res.product_id,
-                "videos": res.video_count,
-                "status": res.status,
-                "detail": res.selector_used or res.error
-            })
-        
-        return jsonify({"error": "Nenhum resultado retornado"}), 500
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        min_sales = int(data.get("min_sales", 100))
+        max_affiliates = int(data.get("max_affiliates", 50))
+        delay = float(data.get("delay", 2.0))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Parâmetros numéricos inválidos"}), 400
 
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 10000))
-    app.run(host='0.0.0.0', port=port)
+    job_id = uuid.uuid4().hex[:12]
+    with JOBS_LOCK:
+        JOBS[job_id] = {
+            "status": "running",
+            "total": len(entries),
+            "done": 0,
+            "results": [],
+            "error": None,
+            "min_sales": min_sales,
+            "max_affiliates": max_affiliates,
+            "started_at": datetime.now().isoformat(timespec="seconds"),
+        }
+
+    threading.Thread(
+        target=run_job,
+        args=(job_id, entries, min_sales, max_affiliates, delay),
+        daemon=True,
+    ).start()
+
+    # Estimativa grosseira: ~1,5s de rede por produto, mais a pausa anti-bot.
+    return jsonify(
+        {
+            "job_id": job_id,
+            "total": len(entries),
+            "eta_seconds": round(len(entries) * (delay + 1.5)),
+        }
+    )
+
+
+@app.route("/api/scan/<job_id>")
+def scan_status(job_id: str):
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        if job is None:
+            return jsonify({"error": "Job não encontrado"}), 404
+        return jsonify({"job_id": job_id, **job})
+
+
+@app.route("/", defaults={"path": ""})
+@app.route("/<path:path>")
+def serve(path: str):
+    if path and os.path.exists(os.path.join(app.static_folder, path)):
+        return send_from_directory(app.static_folder, path)
+    if not os.path.exists(os.path.join(app.static_folder, "index.html")):
+        return (
+            "Front não compilado. Rode <code>npm install &amp;&amp; npm run build</code>, "
+            "ou use <code>npm run dev</code> para desenvolvimento.",
+            503,
+        )
+    return send_from_directory(app.static_folder, "index.html")
+
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 10000))
+    print(f"\n  Painel em http://localhost:{port}\n")
+    app.run(host="0.0.0.0", port=port)

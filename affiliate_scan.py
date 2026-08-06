@@ -311,8 +311,17 @@ def http2_available() -> bool:
 
 
 async def run(
-    entries: list[str], cookies_path: str, min_sales: int, max_affiliates: int, delay: float
+    entries: list[str],
+    cookies_path: str,
+    min_sales: int,
+    max_affiliates: int,
+    delay: float,
+    on_result=None,
 ) -> list[ProductStats]:
+    """
+    Varre a lista em série. `on_result` recebe cada ProductStats assim que fica
+    pronto — é o que alimenta a barra de progresso da interface web.
+    """
     cookies = load_cookies(cookies_path)
     endpoint = load_endpoint()
     results: list[ProductStats] = []
@@ -325,6 +334,8 @@ async def run(
             stats = await process(entry, client, endpoint, cookies)
             stats.status = classify(stats, min_sales, max_affiliates)
             results.append(stats)
+            if on_result:
+                on_result(stats)
             if i < len(entries) - 1:
                 await asyncio.sleep(delay)
 
